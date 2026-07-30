@@ -83,4 +83,5 @@ export interface LLMSettings {
   baseURL: string;
   apiKey: string;
   model: string;
+  bingApiKey?: string;
 }

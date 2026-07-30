@@ -132,6 +132,32 @@ function cleanReview(raw) {
   return review;
 }
 
+/** 调用 Bing Search v7 API 搜索公开网页 */
+async function bingSearch(apiKey, query, count = 10) {
+  const url = new URL('https://api.bing.microsoft.com/v7.0/search');
+  url.searchParams.set('q', query);
+  url.searchParams.set('count', String(Math.min(Math.max(1, count), 50)));
+  url.searchParams.set('mkt', 'zh-CN');
+  url.searchParams.set('setLang', 'zh');
+  url.searchParams.set('safeSearch', 'Off');
+  const resp = await fetch(url.toString(), {
+    headers: { 'Ocp-Apim-Subscription-Key': apiKey },
+  });
+  if (!resp.ok) {
+    const t = await resp.text().catch(() => '');
+    throw new Error(`Bing Search 返回 ${resp.status}：${t.slice(0, 200)}`);
+  }
+  const data = await resp.json();
+  return (data && data.webPages && data.webPages.value) || [];
+}
+
+/** 将多个网页摘要拼接成一段上下文文本 */
+function buildSearchContext(pages) {
+  return pages
+    .map((p, i) => `[网页${i + 1}]\n标题：${p.name || ''}\n链接：${p.url || ''}\n摘要：${p.snippet || ''}`)
+    .join('\n\n');
+}
+
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
 app.post('/api/test-connection', async (req, res) => {
@@ -194,6 +220,105 @@ app.post('/api/collect', async (req, res) => {
       const key = c.content.slice(0, 40);
       if (seen.has(key)) continue;
       if (cleaned.some((x) => similarity(x.content, c.content) > 0.7)) continue; // 批内去重
+      seen.add(key);
+      cleaned.push(c);
+    }
+    res.json({ reviews: cleaned.slice(0, batch) });
+  } catch (e) {
+    res.status(502).json({ error: e.name === 'AbortError' ? '采集请求超时，请重试' : '采集失败：' + e.message });
+  }
+});
+
+/**
+ * 真实采集：先调用 Bing Search 搜索公开网页，再用大模型从网页摘要中提取结构化评价。
+ * 需要用户自备 Bing Search v7 API Key。
+ */
+app.post('/api/search-collect', async (req, res) => {
+  const cfg = requireConfig(req, res);
+  if (!cfg) return;
+  const { bingApiKey, keyword, platforms = [], count = 20, focus = '', exclude = [] } = req.body || {};
+  if (!bingApiKey) {
+    return res.status(400).json({ error: '缺少 Bing Search API Key，请先在设置页配置' });
+  }
+  if (!keyword || !String(keyword).trim()) {
+    return res.status(400).json({ error: '缺少产品关键词' });
+  }
+  const batch = Math.min(Math.max(1, parseInt(count, 10) || 20), 20);
+  const selectedPlatforms = Array.isArray(platforms) && platforms.length ? platforms : VALID_PLATFORMS;
+  const platformNames = selectedPlatforms.map((p) => PLATFORM_NAMES[p] || p).join('、');
+
+  // 为每个平台分别搜索，提升结果覆盖率
+  const searchQueries = selectedPlatforms.map((p) => {
+    const name = PLATFORM_NAMES[p] || '';
+    return `${String(keyword).trim()} ${name} 用户评价 评测`;
+  });
+  // 额外加一条通用搜索
+  searchQueries.push(`${String(keyword).trim()} 用户评价 评测`);
+
+  let pages = [];
+  try {
+    const results = await Promise.all(
+      searchQueries.map((q) => bingSearch(String(bingApiKey), q, Math.min(5, Math.ceil(15 / searchQueries.length))))
+    );
+    const seen = new Set();
+    for (const list of results) {
+      for (const p of list) {
+        if (!p.url || seen.has(p.url)) continue;
+        seen.add(p.url);
+        pages.push(p);
+      }
+    }
+  } catch (e) {
+    return res.status(502).json({ error: '搜索失败：' + e.message });
+  }
+
+  if (!pages.length) {
+    return res.json({ reviews: [] });
+  }
+
+  const context = buildSearchContext(pages.slice(0, 15));
+
+  const systemPrompt =
+    '你是一名严谨的用户研究助手。下面提供了通过搜索引擎获取的若干公开网页摘要。' +
+    '请仅根据这些摘要内容，提取或归纳真实用户评价。' +
+    '严禁编造网页中没有的内容、昵称或链接。如果摘要中没有任何可用评价，请返回空数组 []。' +
+    '输出必须是可以被 JSON.parse 直接解析的 JSON 数组，不要输出 Markdown 代码块或其他解释性文字。';
+
+  const excludeLines = Array.isArray(exclude) && exclude.length
+    ? '\n以下内容已采集过，禁止重复返回：\n' + exclude.slice(0, 40).map((c, i) => `${i + 1}. ${String(c).slice(0, 50)}`).join('\n')
+    : '';
+
+  const userPrompt =
+    `产品关键词：「${String(keyword).trim()}」\n` +
+    `优先平台：${platformNames}。\n` +
+    (focus ? `重点关注：${String(focus).slice(0, 200)}。\n` : '') +
+    `请从以下网页摘要中，提取最多 ${batch} 条互不重复的真实用户评价。` +
+    excludeLines +
+    '\n\n网页摘要：\n' +
+    context +
+    '\n\n每条评价使用以下 JSON 结构，组成 JSON 数组返回：\n' +
+    '[{"content":"评价原文（口语化，20-200字，必须来自网页摘要）","platform":"xiaohongshu/weibo/taobao/jd/zhihu/douyin/smzdm/bilibili/other 之一（根据摘要推断，无法推断则填 other）",' +
+    '"rating":1到5的整数,"keywords":["关键词1","关键词2"],"painPointType":"握持/清洁/重量/操作/外观/噪音/价格/其他 之一（无则省略该字段）",' +
+    '"scenario":"使用场景","hasImage":true或false,"sourceUrl":"原文完整链接（来自网页摘要）","authorName":"用户昵称（摘要中有则填，无则省略）","reviewDate":"YYYY-MM-DD（有则填）","likeCount":点赞数}\n' +
+    '要求：1) 每条评价必须能在网页摘要中找到依据；2) 不要返回网页中没有的内容；3) 没有可用评价时返回 []；4) 只输出 JSON 数组本身。';
+
+  try {
+    const text = await chat(cfg, [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt },
+    ]);
+    const arr = extractJson(text, '[', ']');
+    if (!Array.isArray(arr)) {
+      return res.status(502).json({ error: '模型返回格式异常，无法解析为 JSON 数组，请重试' });
+    }
+    const seen = new Set((Array.isArray(exclude) ? exclude : []).map((c) => String(c).slice(0, 40)));
+    const cleaned = [];
+    for (const item of arr) {
+      const c = cleanReview(item);
+      if (!c) continue;
+      const key = c.content.slice(0, 40);
+      if (seen.has(key)) continue;
+      if (cleaned.some((x) => similarity(x.content, c.content) > 0.7)) continue;
       seen.add(key);
       cleaned.push(c);
     }

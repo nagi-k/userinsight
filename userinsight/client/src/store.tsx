@@ -40,6 +40,7 @@ interface StoreShape {
   importAll: (projects: Project[], currentId: string | null) => void;
   // 采集任务（跨页面保持运行）
   startCollection: (projectId: string, params: CollectionState['params']) => void;
+  startSearchCollection: (projectId: string, params: CollectionState['params'] & { bingApiKey: string }) => void;
   cancelCollection: () => void;
   clearCollection: () => void;
   confirmCollection: () => void;
@@ -183,6 +184,91 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       })();
     };
 
+    const startSearchCollection = (projectId: string, params: CollectionState['params'] & { bingApiKey: string }) => {
+      const project = state.projects.find((p) => p.id === projectId);
+      if (!project) return;
+
+      setState((s) => ({
+        ...s,
+        collection: {
+          projectId,
+          phase: 'running',
+          log: [`[${nowTime()}] 开始真实采集（Bing Search）…`],
+          error: '',
+          pending: [],
+          params,
+        },
+      }));
+
+      (async () => {
+        const collected: PendingReview[] = [];
+        const exclude = project.reviews.map((r) => r.content.slice(0, 40));
+        const isDupInLib = (content: string) => project.reviews.some((r) => similarity(r.content, content) > 0.6);
+
+        try {
+          let remaining = Math.max(10, params.targetCount);
+          let batchNo = 0;
+          while (remaining > 0) {
+            batchNo++;
+            const batchSize = Math.min(20, remaining);
+            pushLog(`正在搜索并提取（第 ${batchNo} 批，目标 ${batchSize} 条）…`);
+            const data = await api.searchCollect({
+              bingApiKey: params.bingApiKey,
+              keyword: params.keyword.trim(),
+              platforms: params.platforms,
+              count: batchSize,
+              focus: params.focus.trim(),
+              exclude: exclude.slice(-80),
+            });
+            pushLog('正在结构化与校验…');
+            if (!data.reviews.length) {
+              pushLog('搜索引擎已无更多新内容，采集提前结束');
+              break;
+            }
+            for (const item of data.reviews) {
+              const rating = (Math.min(5, Math.max(1, Math.round(item.rating))) || 3) as Review['rating'];
+              const content = item.content.trim();
+              const dup = isDupInLib(content) || collected.some((c) => similarity(c.content, content) > 0.6);
+              exclude.push(content.slice(0, 40));
+              collected.push({
+                id: uid(),
+                content,
+                platform: (PLATFORM_KEYS as string[]).includes(item.platform)
+                  ? (item.platform as Review['platform'])
+                  : 'other',
+                rating,
+                keywords: Array.isArray(item.keywords) ? item.keywords.slice(0, 6) : [],
+                painPointType: item.painPointType as Review['painPointType'],
+                scenario: item.scenario,
+                hasImage: !!item.hasImage,
+                sentiment: (item.sentiment as Review['sentiment']) || sentimentFromRating(rating),
+                sourceUrl: item.sourceUrl,
+                authorName: item.authorName,
+                reviewDate: item.reviewDate,
+                likeCount: item.likeCount,
+                verified: !!item.verified,
+                source: 'auto',
+                createdAt: new Date().toISOString(),
+                tags: [],
+                checked: !dup,
+                dup,
+              });
+            }
+            pushLog(`本批获得 ${data.reviews.length} 条有效评价（累计 ${collected.length} 条）`);
+            remaining = Math.max(10, params.targetCount) - collected.length;
+          }
+          if (!collected.length) {
+            updateCollection({ phase: 'idle', error: '未采集到符合条件的评价，请调整关键词或平台后重试' });
+            return;
+          }
+          pushLog(`采集完成，共 ${collected.length} 条待确认`);
+          updateCollection({ phase: 'confirm', pending: collected });
+        } catch (e) {
+          updateCollection({ phase: 'idle', error: e instanceof Error ? e.message : '采集失败，请重试' });
+        }
+      })();
+    };
+
     return {
       projects: state.projects,
       current,
@@ -232,6 +318,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       importAll: (projects, currentId) =>
         setState({ projects, currentId: currentId || projects[0]?.id || null, collection: emptyCollection }),
       startCollection,
+      startSearchCollection,
       cancelCollection: () => updateCollection({ phase: 'idle', error: '采集已取消' }),
       clearCollection: () => setState((s) => ({ ...s, collection: emptyCollection })),
       confirmCollection: () => {

@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   CloudDownload, Loader2, AlertTriangle, ShieldCheck, CheckCircle2, Trash2,
-  ExternalLink, ClipboardPaste, Wand2, Info,
+  ExternalLink, ClipboardPaste, Wand2, Info, Search,
 } from 'lucide-react';
 import { useStore } from '../store';
 import { Review } from '../types';
 import { hasSettings } from '../lib/api';
+import { loadSettings } from '../lib/storage';
 import {
   PLATFORMS, PLATFORM_KEYS, uid, parseRatingFromText, matchKeywords, SENTIMENT_LABELS,
   sentimentFromRating,
@@ -17,6 +18,7 @@ export default function Collect() {
     current,
     collection,
     startCollection,
+    startSearchCollection,
     cancelCollection,
     clearCollection,
     confirmCollection,
@@ -62,6 +64,19 @@ export default function Collect() {
     if (!keyword.trim()) return;
     if (!platforms.length) return;
     startCollection(current.id, { keyword, platforms, targetCount, focus });
+  };
+
+  const startReal = () => {
+    if (!current) return;
+    if (!configured) return;
+    if (!keyword.trim()) return;
+    if (!platforms.length) return;
+    const { bingApiKey } = loadSettings();
+    if (!bingApiKey?.trim()) {
+      alert('请先前往「设置」页配置 Bing Search API Key');
+      return;
+    }
+    startSearchCollection(current.id, { keyword, platforms, targetCount, focus, bingApiKey: bingApiKey.trim() });
   };
 
   const checkedCount = collection.pending.filter((p) => p.checked).length;
@@ -131,20 +146,30 @@ export default function Collect() {
           <input className={inputCls} value={focus} onChange={(e) => setFocus(e.target.value)}
             placeholder="如：重点关注清洁和便携相关反馈" disabled={isRunningHere} />
         </div>
-        <div className="mt-5 flex items-center gap-3">
+        <div className="mt-5 flex flex-wrap items-center gap-3">
           {isRunningHere ? (
             <button className={btnSecondary} onClick={cancelCollection}>
               <AlertTriangle size={16} /> 停止采集
             </button>
           ) : (
-            <button className={btnPrimary} onClick={start}
-              disabled={!configured || !keyword.trim() || !platforms.length || collection.phase === 'running'}>
-              <CloudDownload size={16} />
-              开始采集
-            </button>
+            <>
+              <button className={btnPrimary} onClick={start}
+                disabled={!configured || !keyword.trim() || !platforms.length || collection.phase === 'running'}>
+                <CloudDownload size={16} />
+                开始采集
+              </button>
+              <button className={btnSecondary} onClick={startReal}
+                disabled={!configured || !keyword.trim() || !platforms.length || collection.phase === 'running'}>
+                <Search size={16} />
+                真实采集
+              </button>
+            </>
           )}
           {!platforms.length && <span className="text-xs text-gray-400">请至少选择一个平台</span>}
         </div>
+        <p className="mt-2 text-xs text-gray-400">
+          「开始采集」由大模型基于自身知识生成评价；「真实采集」通过 Bing Search 抓取公开网页并提取评价，需在设置页配置 Bing API Key。
+        </p>
         {collection.error && (
           <div className="mt-4 flex items-center gap-2 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">
             <AlertTriangle size={15} /> {collection.error}

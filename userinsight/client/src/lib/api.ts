@@ -131,6 +131,21 @@ export const api = {
       () => backendPost('/api/collect', params as unknown as Record<string, unknown>),
       (cfg) => direct.collect(cfg, params)
     ),
+  searchCollect: (params: { bingApiKey: string; keyword: string; platforms: string[]; count: number; focus: string; exclude: string[] }) =>
+    call<{ reviews: CollectedReview[] }>(
+      '真实采集（Bing Search）',
+      () => backendPost('/api/search-collect', params as unknown as Record<string, unknown>),
+      () => {
+        const err = new ApiError({
+          action: '真实采集（Bing Search）',
+          message: '浏览器直连不支持 Bing Search 真实采集',
+          hint: '真实采集需要调用 Bing Search API，请在本地启动后端服务（npm run dev）后使用，或部署到支持后端运行的服务器。',
+          mode: '浏览器直连',
+        });
+        reportError(err.detail);
+        throw err;
+      }
+    ),
   insightDraft: (quotes: string[], category: string) =>
     call<{ behaviorInsight: string; designRequirement: string; hmwQuestion: string }>(
       'AI 洞察草稿',

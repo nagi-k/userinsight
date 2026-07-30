@@ -142,9 +142,9 @@ export function reviewsToCSV(reviews: Review[]): string {
 }
 
 export const SENTIMENT_COLORS: Record<Review['sentiment'], string> = {
-  positive: '#16a34a',
-  negative: '#dc2626',
-  neutral: '#6b7280',
+  positive: '#6366f1', // indigo-500
+  negative: '#f59e0b', // amber-500
+  neutral: '#94a3b8',  // slate-400
 };
 
 export const CHART_COLORS = ['#1e40af', '#0ea5e9', '#8b5cf6', '#f59e0b', '#10b981', '#ef4444'];

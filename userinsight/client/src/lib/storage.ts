@@ -38,6 +38,7 @@ export function loadSettings(): LLMSettings {
       baseURL: parsed.baseURL || '',
       apiKey: parsed.apiKey || '',
       model: parsed.model || '',
+      bingApiKey: parsed.bingApiKey || '',
     };
   } catch {
     return { baseURL: '', apiKey: '', model: '' };

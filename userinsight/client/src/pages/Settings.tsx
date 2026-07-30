@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Loader2, PlugZap, CheckCircle2, AlertTriangle, KeyRound } from 'lucide-react';
+import { Loader2, PlugZap, CheckCircle2, AlertTriangle, KeyRound, Search } from 'lucide-react';
 import { loadSettings, saveSettings } from '../lib/storage';
 import { api, ApiError } from '../lib/api';
 import { inputCls, btnPrimary, btnSecondary, cardCls } from '../components/ui';
@@ -10,14 +10,21 @@ export default function Settings() {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string; detail?: Record<string, unknown> } | null>(null);
 
+  const settings = () => ({
+    baseURL: form.baseURL.trim(),
+    apiKey: form.apiKey.trim(),
+    model: form.model.trim(),
+    bingApiKey: form.bingApiKey?.trim() || '',
+  });
+
   const save = () => {
-    saveSettings({ baseURL: form.baseURL.trim(), apiKey: form.apiKey.trim(), model: form.model.trim() });
+    saveSettings(settings());
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
   };
 
   const test = async () => {
-    saveSettings({ baseURL: form.baseURL.trim(), apiKey: form.apiKey.trim(), model: form.model.trim() });
+    saveSettings(settings());
     setTesting(true);
     setTestResult(null);
     try {
@@ -65,6 +72,23 @@ export default function Settings() {
             onChange={(e) => setForm({ ...form, model: e.target.value })}
             placeholder="如：kimi-k2-0905-preview / deepseek-chat" />
         </div>
+
+        <div className="border-t border-gray-100 pt-4">
+          <h3 className="font-semibold text-gray-900 inline-flex items-center gap-2 mb-3">
+            <Search size={16} className="text-primary" /> 真实采集配置（可选）
+          </h3>
+          <p className="text-xs text-gray-400 mb-3">
+            开启真实采集需要 Bing Search v7 API Key。用于从公开网页中抓取真实用户评价。
+            可在 <a href="https://portal.azure.com/" target="_blank" rel="noopener noreferrer" className="underline hover:text-primary">Azure Portal</a> 申请，每月有 1000 次免费额度。
+          </p>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Bing Search API Key</label>
+            <input type="password" className={inputCls} value={form.bingApiKey || ''}
+              onChange={(e) => setForm({ ...form, bingApiKey: e.target.value })}
+              placeholder="Bing Search v7 API Key" />
+          </div>
+        </div>
+
         <div className="flex items-center gap-3 pt-1">
           <button className={btnPrimary} onClick={save}>
             <CheckCircle2 size={15} /> 保存配置
