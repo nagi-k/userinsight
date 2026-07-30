@@ -1,14 +1,14 @@
 import React, { useState } from 'react';
 import { Loader2, PlugZap, CheckCircle2, AlertTriangle, KeyRound } from 'lucide-react';
 import { loadSettings, saveSettings } from '../lib/storage';
-import { api } from '../lib/api';
+import { api, ApiError } from '../lib/api';
 import { inputCls, btnPrimary, btnSecondary, cardCls } from '../components/ui';
 
 export default function Settings() {
   const [form, setForm] = useState(loadSettings);
   const [saved, setSaved] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [testResult, setTestResult] = useState<{ ok: boolean; msg: string; detail?: Record<string, unknown> } | null>(null);
 
   const save = () => {
     saveSettings({ baseURL: form.baseURL.trim(), apiKey: form.apiKey.trim(), model: form.model.trim() });
@@ -24,7 +24,9 @@ export default function Settings() {
       await api.testConnection();
       setTestResult({ ok: true, msg: '连接成功，配置可用' });
     } catch (e) {
-      setTestResult({ ok: false, msg: e instanceof Error ? e.message : '连接失败' });
+      const detail = e instanceof ApiError ? e.detail : undefined;
+      const msg = e instanceof Error ? e.message : '连接失败';
+      setTestResult({ ok: false, msg, detail });
     } finally {
       setTesting(false);
     }
@@ -75,11 +77,21 @@ export default function Settings() {
           {saved && <span className="text-sm text-green-600">已保存</span>}
         </div>
         {testResult && (
-          <div className={`flex items-center gap-2 text-sm rounded-lg px-3 py-2 ${
+          <div className={`text-sm rounded-lg px-3 py-2 space-y-1 ${
             testResult.ok ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'
           }`}>
-            {testResult.ok ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
-            {testResult.msg}
+            <div className="flex items-center gap-2">
+              {testResult.ok ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
+              {testResult.msg}
+            </div>
+            {!testResult.ok && testResult.detail && (
+              <div className="text-xs opacity-90 space-y-0.5 pl-5">
+                {!!testResult.detail.endpoint && <p>端点：{String(testResult.detail.endpoint)}</p>}
+                {!!testResult.detail.status && <p>状态码：{String(testResult.detail.status)}</p>}
+                {!!testResult.detail.body && <p>响应：{String(testResult.detail.body)}</p>}
+                {!!testResult.detail.hint && <p>提示：{String(testResult.detail.hint)}</p>}
+              </div>
+            )}
           </div>
         )}
       </div>
