@@ -73,10 +73,12 @@ export interface ChatError extends Error {
 }
 
 /** 调用 OpenAI 兼容的 chat/completions 接口 */
-async function chat(cfg: LLMSettings, messages: { role: string; content: string }[], temperature = 0.7): Promise<string> {
+async function chat(cfg: LLMSettings, messages: { role: string; content: string }[], temperature?: number): Promise<string> {
   const url = cfg.baseURL.replace(/\/+$/, '') + '/chat/completions';
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 90000);
+  const body: Record<string, unknown> = { model: cfg.model, messages };
+  if (temperature !== undefined) body.temperature = temperature;
   let resp: Response;
   try {
     resp = await fetch(url, {
@@ -86,7 +88,7 @@ async function chat(cfg: LLMSettings, messages: { role: string; content: string 
         'Content-Type': 'application/json',
         Authorization: `Bearer ${cfg.apiKey}`,
       },
-      body: JSON.stringify({ model: cfg.model, messages, temperature }),
+      body: JSON.stringify(body),
     });
   } catch (e) {
     clearTimeout(timer);
@@ -158,7 +160,8 @@ function cleanReview(raw: Record<string, unknown>): CollectedReview | null {
 
 export const direct = {
   async testConnection(cfg: LLMSettings): Promise<{ ok: boolean }> {
-    await chat(cfg, [{ role: 'user', content: '请仅回复"ok"两个字母' }], 0);
+    // 不传 temperature：部分模型（如 kimi-k3）仅支持 temperature=1，使用模型默认值更稳妥
+    await chat(cfg, [{ role: 'user', content: '请仅回复"ok"两个字母' }]);
     return { ok: true };
   },
 

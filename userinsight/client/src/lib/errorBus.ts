@@ -58,6 +58,9 @@ export function hintForStatus(status?: number, body?: string): string {
   if (status === 404 || (b.includes('model') && b.includes('not') && b.includes('exist')) || b.includes('does not exist') || b.includes('not found the model')) {
     return '接口地址或模型名称不正确。请确认当前 API Key 有权访问该模型。常见配置：Kimi/Moonshot 填 https://api.moonshot.cn/v1，模型如 moonshot-v1-8k / moonshot-v1-auto / kimi-k2-0711-longcontext；DeepSeek 填 https://api.deepseek.com/v1，模型为 deepseek-chat / deepseek-reasoner。';
   }
+  if (status === 400 || b.includes('invalid_request_error')) {
+    return '请求参数不被模型接受。常见原因：1) 该模型仅支持 temperature=1（如 kimi-k3），请避免手动指定 temperature；2) 模型名称拼写错误。';
+  }
   if (status === 422) {
     return '请求参数不被接受。请检查模型名称是否与平台要求完全一致。';
   }
