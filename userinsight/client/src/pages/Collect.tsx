@@ -5,142 +5,66 @@ import {
 } from 'lucide-react';
 import { useStore } from '../store';
 import { Review } from '../types';
-import { api, hasSettings } from '../lib/api';
+import { hasSettings } from '../lib/api';
 import {
-  PLATFORMS, PLATFORM_KEYS, uid, similarity, sentimentFromRating,
-  parseRatingFromText, matchKeywords, SENTIMENT_LABELS,
+  PLATFORMS, PLATFORM_KEYS, uid, parseRatingFromText, matchKeywords, SENTIMENT_LABELS,
+  sentimentFromRating,
 } from '../lib/utils';
 import { Badge, RatingStars, inputCls, selectCls, btnPrimary, btnSecondary, cardCls } from '../components/ui';
 
-interface PendingReview extends Review {
-  checked: boolean;
-  dup: boolean;
-}
-
-type Phase = 'idle' | 'running' | 'confirm';
-
 export default function Collect() {
-  const { current, updateCurrent } = useStore();
+  const {
+    current,
+    collection,
+    startCollection,
+    cancelCollection,
+    clearCollection,
+    confirmCollection,
+    setPendingChecked,
+    setPendingAllChecked,
+    removePending,
+    updatePendingReview,
+  } = useStore();
+
+  // 表单状态（仅在未运行时与 collection.params 同步）
   const [keyword, setKeyword] = useState(current?.product || '');
   const [platforms, setPlatforms] = useState<string[]>(['xiaohongshu', 'weibo', 'zhihu']);
   const [targetCount, setTargetCount] = useState(50);
   const [focus, setFocus] = useState('');
-  const [phase, setPhase] = useState<Phase>('idle');
-  const [log, setLog] = useState<string[]>([]);
-  const [error, setError] = useState('');
-  const [pending, setPending] = useState<PendingReview[]>([]);
-
-  useEffect(() => {
-    if (current) setKeyword(current.product);
-    setPhase('idle');
-    setPending([]);
-    setLog([]);
-    setError('');
-  }, [current?.id]);
 
   const configured = hasSettings();
+  const isRunningHere = collection.phase === 'running' && collection.projectId === current?.id;
+  const isConfirmHere = collection.phase === 'confirm' && collection.projectId === current?.id;
+  const isBusyElsewhere = collection.phase !== 'idle' && collection.projectId !== current?.id;
+
+  // 当切换到当前项目时，把表单回填为本次采集参数；当前无采集时默认用项目名
+  useEffect(() => {
+    if (!current) return;
+    if (collection.projectId === current.id) {
+      setKeyword(collection.params.keyword || current.product);
+      setPlatforms(collection.params.platforms.length ? collection.params.platforms : ['xiaohongshu', 'weibo', 'zhihu']);
+      setTargetCount(collection.params.targetCount || 50);
+      setFocus(collection.params.focus || '');
+    } else {
+      setKeyword(current.product);
+      setPlatforms(['xiaohongshu', 'weibo', 'zhihu']);
+      setTargetCount(50);
+      setFocus('');
+    }
+  }, [current?.id, collection.projectId]);
 
   const togglePlatform = (p: string) =>
     setPlatforms((s) => (s.includes(p) ? s.filter((x) => x !== p) : [...s, p]));
 
-  const pushLog = (line: string) => setLog((l) => [...l, `[${new Date().toLocaleTimeString()}] ${line}`]);
-
-  const startCollect = async () => {
+  const start = () => {
     if (!current) return;
-    if (!configured) {
-      setError('请先在设置页配置大模型 API Key');
-      return;
-    }
-    if (!keyword.trim()) {
-      setError('请输入产品关键词');
-      return;
-    }
-    setError('');
-    setPending([]);
-    setLog([]);
-    setPhase('running');
-    const collected: PendingReview[] = [];
-    // 排除库内已有内容，避免重复采集
-    const exclude = current.reviews.map((r) => r.content.slice(0, 40));
-    const isDupInLib = (content: string) => current.reviews.some((r) => similarity(r.content, content) > 0.6);
-
-    try {
-      let remaining = Math.max(10, targetCount);
-      let batchNo = 0;
-      while (remaining > 0) {
-        batchNo++;
-        const batchSize = Math.min(20, remaining); // 单次最多 20 条，分批避免超时
-        pushLog(`正在搜集（第 ${batchNo} 批，目标 ${batchSize} 条）…`);
-        const data = await api.collect({
-          keyword: keyword.trim(),
-          platforms,
-          count: batchSize,
-          focus: focus.trim(),
-          exclude: exclude.slice(-80),
-        });
-        pushLog('正在结构化与校验…');
-        if (!data.reviews.length) {
-          pushLog('模型已无更多新内容，采集提前结束');
-          break;
-        }
-        for (const item of data.reviews) {
-          const rating = (Math.min(5, Math.max(1, Math.round(item.rating))) || 3) as Review['rating'];
-          const content = item.content.trim();
-          const dup = isDupInLib(content) || collected.some((c) => similarity(c.content, content) > 0.6);
-          exclude.push(content.slice(0, 40));
-          collected.push({
-            id: uid(),
-            content,
-            platform: (PLATFORM_KEYS as string[]).includes(item.platform) ? (item.platform as Review['platform']) : 'other',
-            rating,
-            keywords: Array.isArray(item.keywords) ? item.keywords.slice(0, 6) : [],
-            painPointType: item.painPointType as Review['painPointType'],
-            scenario: item.scenario,
-            hasImage: !!item.hasImage,
-            sentiment: (item.sentiment as Review['sentiment']) || sentimentFromRating(rating),
-            sourceUrl: item.sourceUrl,
-            authorName: item.authorName,
-            reviewDate: item.reviewDate,
-            likeCount: item.likeCount,
-            verified: !!item.verified,
-            source: 'auto',
-            createdAt: new Date().toISOString(),
-            tags: [],
-            checked: !dup, // 疑似重复默认不勾选
-            dup,
-          });
-        }
-        pushLog(`本批获得 ${data.reviews.length} 条有效评价（累计 ${collected.length} 条）`);
-        remaining = Math.max(10, targetCount) - collected.length;
-      }
-      if (!collected.length) {
-        setError('未采集到符合条件的评价，请调整关键词或平台后重试');
-        setPhase('idle');
-        return;
-      }
-      pushLog(`采集完成，共 ${collected.length} 条待确认`);
-      setPending(collected);
-      setPhase('confirm');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '采集失败，请重试');
-      setPhase('idle');
-    }
+    if (!configured) return;
+    if (!keyword.trim()) return;
+    if (!platforms.length) return;
+    startCollection(current.id, { keyword, platforms, targetCount, focus });
   };
 
-  const checkedCount = pending.filter((p) => p.checked).length;
-
-  const confirmImport = () => {
-    if (!current) return;
-    const toAdd = pending
-      .filter((p) => p.checked)
-      .map(({ checked, dup, ...rest }) => rest as Review);
-    if (!toAdd.length) return;
-    updateCurrent((p) => ({ ...p, reviews: [...p.reviews, ...toAdd] }));
-    setPending([]);
-    setPhase('idle');
-    setLog([]);
-    window.location.hash = '#/reviews';
-  };
+  const checkedCount = collection.pending.filter((p) => p.checked).length;
 
   return (
     <div className="max-w-6xl mx-auto space-y-5">
@@ -149,7 +73,7 @@ export default function Collect() {
         <p className="text-sm text-gray-500 mt-0.5">输入产品关键词，自动从公开渠道搜集用户评价并结构化入库</p>
       </div>
 
-      {/* 合规提示（固定显示） */}
+      {/* 合规提示 */}
       <div className="flex items-center gap-2 rounded-lg bg-blue-50 border border-blue-100 text-blue-800 text-sm px-4 py-2.5">
         <ShieldCheck size={16} className="shrink-0" />
         采集内容来自公开渠道，仅供学术研究使用。平台不包含任何需要登录、绕过验证码或违反 robots 协议的爬虫；昵称等个人信息一律脱敏存储。
@@ -164,6 +88,14 @@ export default function Collect() {
         </div>
       )}
 
+      {isBusyElsewhere && (
+        <div className="flex items-center gap-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm px-4 py-2.5">
+          <Loader2 size={16} className="shrink-0 animate-spin" />
+          当前有其他项目正在采集，切换到「智能采集」对应项目可查看进度；
+          <button className="font-medium underline" onClick={cancelCollection}>取消全部采集</button>
+        </div>
+      )}
+
       {/* 采集任务创建 */}
       <div className={`${cardCls} p-5`}>
         <h2 className="font-semibold text-gray-900 mb-4">创建采集任务</h2>
@@ -171,19 +103,19 @@ export default function Collect() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">产品关键词</label>
             <input className={inputCls} value={keyword} onChange={(e) => setKeyword(e.target.value)}
-              placeholder="默认取项目的目标产品" disabled={phase === 'running'} />
+              placeholder="默认取项目的目标产品" disabled={isRunningHere} />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">期望采集数量</label>
             <input type="number" min={10} max={200} step={10} className={inputCls} value={targetCount}
-              onChange={(e) => setTargetCount(parseInt(e.target.value, 10) || 50)} disabled={phase === 'running'} />
+              onChange={(e) => setTargetCount(parseInt(e.target.value, 10) || 50)} disabled={isRunningHere} />
           </div>
         </div>
         <div className="mt-4">
           <label className="block text-sm font-medium text-gray-700 mb-1.5">目标平台（多选）</label>
           <div className="flex flex-wrap gap-2">
             {PLATFORM_KEYS.map((p) => (
-              <button key={p} type="button" onClick={() => togglePlatform(p)} disabled={phase === 'running'}
+              <button key={p} type="button" onClick={() => togglePlatform(p)} disabled={isRunningHere}
                 className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
                   platforms.includes(p)
                     ? 'bg-primary text-white border-primary'
@@ -197,47 +129,58 @@ export default function Collect() {
         <div className="mt-4">
           <label className="block text-sm font-medium text-gray-700 mb-1">关注点提示词（选填）</label>
           <input className={inputCls} value={focus} onChange={(e) => setFocus(e.target.value)}
-            placeholder="如：重点关注清洁和便携相关反馈" disabled={phase === 'running'} />
+            placeholder="如：重点关注清洁和便携相关反馈" disabled={isRunningHere} />
         </div>
         <div className="mt-5 flex items-center gap-3">
-          <button className={btnPrimary} onClick={startCollect}
-            disabled={phase === 'running' || !configured || !keyword.trim() || !platforms.length}>
-            {phase === 'running' ? <Loader2 size={16} className="animate-spin" /> : <CloudDownload size={16} />}
-            {phase === 'running' ? '采集中…' : '开始采集'}
-          </button>
+          {isRunningHere ? (
+            <button className={btnSecondary} onClick={cancelCollection}>
+              <AlertTriangle size={16} /> 停止采集
+            </button>
+          ) : (
+            <button className={btnPrimary} onClick={start}
+              disabled={!configured || !keyword.trim() || !platforms.length || collection.phase === 'running'}>
+              <CloudDownload size={16} />
+              开始采集
+            </button>
+          )}
           {!platforms.length && <span className="text-xs text-gray-400">请至少选择一个平台</span>}
         </div>
-        {error && (
+        {collection.error && (
           <div className="mt-4 flex items-center gap-2 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">
-            <AlertTriangle size={15} /> {error}
+            <AlertTriangle size={15} /> {collection.error}
           </div>
         )}
       </div>
 
-      {/* 实时进度 */}
-      {(phase === 'running' || log.length > 0) && (
+      {/* 实时进度（任何页面切换回来都能看到） */}
+      {(isRunningHere || (collection.log.length > 0 && collection.projectId === current?.id)) && (
         <div className={`${cardCls} p-5`}>
-          <h2 className="font-semibold text-gray-900 mb-3 inline-flex items-center gap-2">
-            {phase === 'running' && <Loader2 size={16} className="animate-spin text-primary" />}
-            采集进度
-          </h2>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-semibold text-gray-900 inline-flex items-center gap-2">
+              {isRunningHere && <Loader2 size={16} className="animate-spin text-primary" />}
+              采集进度
+            </h2>
+            {isRunningHere && (
+              <span className="text-xs text-gray-400">离开本页后仍可继续运行，切换回来即可查看</span>
+            )}
+          </div>
           <div className="bg-gray-900 rounded-lg p-3 text-xs text-green-300 font-mono space-y-1 max-h-48 overflow-y-auto">
-            {log.map((line, i) => <p key={i}>{line}</p>)}
+            {collection.log.map((line, i) => <p key={i}>{line}</p>)}
           </div>
         </div>
       )}
 
       {/* 待入库确认列表 */}
-      {phase === 'confirm' && (
+      {isConfirmHere && (
         <div className={`${cardCls} p-5`}>
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-semibold text-gray-900">
-              待入库列表 <span className="text-sm font-normal text-gray-500">（已选 {checkedCount} / {pending.length} 条）</span>
+              待入库列表 <span className="text-sm font-normal text-gray-500">（已选 {checkedCount} / {collection.pending.length} 条）</span>
             </h2>
             <div className="flex gap-2">
-              <button className={btnSecondary} onClick={() => setPending((s) => s.map((p) => ({ ...p, checked: true })))}>全选</button>
-              <button className={btnSecondary} onClick={() => setPending((s) => s.map((p) => ({ ...p, checked: false })))}>全不选</button>
-              <button className={btnPrimary} disabled={!checkedCount} onClick={confirmImport}>
+              <button className={btnSecondary} onClick={() => setPendingAllChecked(true)}>全选</button>
+              <button className={btnSecondary} onClick={() => setPendingAllChecked(false)}>全不选</button>
+              <button className={btnPrimary} disabled={!checkedCount} onClick={() => { confirmCollection(); window.location.hash = '#/reviews'; }}>
                 <CheckCircle2 size={16} /> 确认入库（{checkedCount}）
               </button>
             </div>
@@ -255,11 +198,11 @@ export default function Collect() {
                 </tr>
               </thead>
               <tbody>
-                {pending.map((p) => (
+                {collection.pending.map((p) => (
                   <tr key={p.id} className={`border-b border-gray-50 ${p.checked ? '' : 'opacity-50'}`}>
                     <td className="py-2 pr-2">
                       <input type="checkbox" checked={p.checked}
-                        onChange={(e) => setPending((s) => s.map((x) => (x.id === p.id ? { ...x, checked: e.target.checked } : x)))} />
+                        onChange={(e) => setPendingChecked(p.id, e.target.checked)} />
                     </td>
                     <td className="py-2 pr-3">
                       <p className="line-clamp-2 text-gray-800">{p.content}</p>
@@ -270,7 +213,7 @@ export default function Collect() {
                     </td>
                     <td className="py-2 pr-3">
                       <select className={selectCls} value={p.platform}
-                        onChange={(e) => setPending((s) => s.map((x) => (x.id === p.id ? { ...x, platform: e.target.value as Review['platform'] } : x)))}>
+                        onChange={(e) => updatePendingReview(p.id, (x) => ({ ...x, platform: e.target.value as Review['platform'] }))}>
                         {PLATFORM_KEYS.map((k) => <option key={k} value={k}>{PLATFORMS[k]}</option>)}
                       </select>
                     </td>
@@ -278,7 +221,7 @@ export default function Collect() {
                       <select className={selectCls} value={p.rating}
                         onChange={(e) => {
                           const rating = parseInt(e.target.value, 10) as Review['rating'];
-                          setPending((s) => s.map((x) => (x.id === p.id ? { ...x, rating, sentiment: sentimentFromRating(rating) } : x)));
+                          updatePendingReview(p.id, (x) => ({ ...x, rating, sentiment: sentimentFromRating(rating) }));
                         }}>
                         {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n} 星</option>)}
                       </select>
@@ -294,7 +237,7 @@ export default function Collect() {
                     </td>
                     <td className="py-2">
                       <button className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500"
-                        onClick={() => setPending((s) => s.filter((x) => x.id !== p.id))}>
+                        onClick={() => removePending(p.id)}>
                         <Trash2 size={15} />
                       </button>
                     </td>
@@ -311,7 +254,7 @@ export default function Collect() {
   );
 }
 
-/** 手动录入（辅助兜底）：支持单条 / 批量粘贴，基于规则辅助预填 */
+/** 手动录入（辅助兜底） */
 function ManualEntry() {
   const { current, updateCurrent } = useStore();
   const [content, setContent] = useState('');
@@ -350,7 +293,6 @@ function ManualEntry() {
         sentiment: sentimentFromRating(rating),
         sourceUrl: sourceUrl.trim() || undefined,
         reviewDate: reviewDate || undefined,
-        // 无法溯源的内容标记为待核实
         verified: !!sourceUrl.trim(),
         source: 'manual',
         note: note.trim() || undefined,

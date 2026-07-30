@@ -21,9 +21,9 @@ export function loadData(): PersistedData | null {
 }
 
 /** 返回 true 表示保存成功；false 多为容量不足 */
-export function saveData(data: PersistedData): boolean {
+export function saveData(data: { projects: Project[]; currentId: string | null }): boolean {
   try {
-    localStorage.setItem(DATA_KEY, JSON.stringify(data));
+    localStorage.setItem(DATA_KEY, JSON.stringify({ projects: data.projects, currentId: data.currentId }));
     return true;
   } catch {
     return false;
