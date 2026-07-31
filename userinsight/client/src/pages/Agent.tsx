@@ -31,7 +31,7 @@ const STEPS: Step[] = [
 export default function Agent() {
   const { current, updateCurrent } = useStore();
   const [platforms, setPlatforms] = useState<string[]>(['xiaohongshu', 'weibo', 'zhihu', 'douyin']);
-  const [count, setCount] = useState(20);
+  const [count, setCount] = useState(10);
   const [focus, setFocus] = useState('');
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState<Record<string, StepStatus>>(() => Object.fromEntries(STEPS.map((s) => [s.key, 'pending'])));

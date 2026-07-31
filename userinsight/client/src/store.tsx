@@ -126,7 +126,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           let batchNo = 0;
           while (remaining > 0) {
             batchNo++;
-            const batchSize = Math.min(20, remaining);
+            const batchSize = Math.min(10, remaining);
             pushLog(`正在搜集（第 ${batchNo} 批，目标 ${batchSize} 条）…`);
             const data = await api.collect({
               keyword: params.keyword.trim(),
@@ -210,7 +210,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           let batchNo = 0;
           while (remaining > 0) {
             batchNo++;
-            const batchSize = Math.min(20, remaining);
+            const batchSize = Math.min(10, remaining);
             pushLog(`正在搜索并提取（第 ${batchNo} 批，目标 ${batchSize} 条）…`);
             const data = await api.searchCollect({
               bingApiKey: params.bingApiKey,
