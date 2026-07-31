@@ -64,6 +64,9 @@ function InsightWorkspace() {
   const [selected, setSelected] = useState<string[]>([]);
   const [platformFilter, setPlatformFilter] = useState('');
   const [editing, setEditing] = useState<Insight | null>(null);
+  const [aiBatchLoading, setAiBatchLoading] = useState(false);
+  const [aiBatchError, setAiBatchError] = useState('');
+  const [aiBatchProgress, setAiBatchProgress] = useState('');
 
   if (!current) return null;
   const insights = [...current.insights].sort((a, b) => a.order - b.order);
@@ -91,6 +94,64 @@ function InsightWorkspace() {
     updateCurrent((p) => ({ ...p, insights: [...p.insights, insight] }));
     setSelected([]);
     setEditing(insight);
+  };
+
+  const categoryFromReview = (r: Review): Insight['category'] => {
+    if (r.painPointType === '握持' || r.painPointType === '重量' || r.painPointType === '操作') return 'ergonomics';
+    if (r.painPointType === '外观') return 'form';
+    if (r.painPointType === '清洁') return 'material';
+    if (r.painPointType === '噪音' || r.painPointType === '价格') return 'scenario';
+    if (r.painPointType === '其他') return 'emotion';
+    return 'ergonomics';
+  };
+
+  const priorityFromReview = (r: Review): Insight['priority'] => {
+    if (r.rating <= 2) return 'high';
+    if (r.rating === 3) return 'medium';
+    return 'low';
+  };
+
+  const batchGenerateInsights = async () => {
+    const picked = current.reviews.filter((r) => selected.includes(r.id));
+    if (!picked.length) return;
+    setAiBatchLoading(true);
+    setAiBatchError('');
+    setAiBatchProgress('');
+    const generated: Insight[] = [];
+    try {
+      const baseOrder = Math.max(0, ...current.insights.map((i) => i.order));
+      for (let i = 0; i < picked.length; i++) {
+        const r = picked[i];
+        setAiBatchProgress(`正在生成第 ${i + 1}/${picked.length} 条洞察…`);
+        try {
+          const draft = await api.insightDraft([r.content], INSIGHT_CATEGORIES[categoryFromReview(r)]);
+          generated.push({
+            id: uid(),
+            reviewIds: [r.id],
+            quote: r.content.slice(0, 200),
+            behaviorInsight: draft.behaviorInsight || '',
+            designRequirement: draft.designRequirement || '',
+            hmwQuestion: draft.hmwQuestion || '',
+            category: categoryFromReview(r),
+            priority: priorityFromReview(r),
+            order: baseOrder + i + 1,
+            createdAt: new Date().toISOString(),
+          });
+        } catch (e) {
+          // 单条失败继续生成下一条
+          setAiBatchProgress(`第 ${i + 1} 条洞察生成失败，已跳过`);
+        }
+      }
+      if (generated.length) {
+        updateCurrent((p) => ({ ...p, insights: [...p.insights, ...generated] }));
+      }
+      setSelected([]);
+    } catch (e) {
+      setAiBatchError(e instanceof Error ? e.message : '批量生成失败');
+    } finally {
+      setAiBatchLoading(false);
+      setAiBatchProgress('');
+    }
   };
 
   const saveInsight = (ins: Insight) => {
@@ -147,9 +208,24 @@ function InsightWorkspace() {
           ))}
           {!reviews.length && <p className="text-xs text-gray-400 text-center py-8">暂无评价数据</p>}
         </div>
-        <button className={btnPrimary + ' mt-3 justify-center w-full'} disabled={!selected.length} onClick={extractInsight}>
-          <Lightbulb size={15} /> 提取洞察（已选 {selected.length} 条）
-        </button>
+        <div className="mt-3 space-y-2">
+          <button className={btnPrimary + ' justify-center w-full'} disabled={!selected.length || aiBatchLoading} onClick={extractInsight}>
+            <Lightbulb size={15} /> 提取洞察（已选 {selected.length} 条）
+          </button>
+          <button
+            className={btnSecondary + ' justify-center w-full'}
+            disabled={!selected.length || aiBatchLoading || !hasSettings()}
+            onClick={batchGenerateInsights}
+            title={hasSettings() ? '为每条选中的评价自动生成 AI 洞察' : '请先在设置页配置大模型 API'}
+          >
+            {aiBatchLoading ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
+            {aiBatchLoading ? 'AI 生成中…' : '批量 AI 生成洞察'}
+          </button>
+          {aiBatchLoading && aiBatchProgress && (
+            <p className="text-xs text-primary text-center">{aiBatchProgress}</p>
+          )}
+          {aiBatchError && <p className="text-xs text-red-600 text-center">{aiBatchError}</p>}
+        </div>
       </div>
 
       {/* 右侧：洞察卡片列表（拖拽排序） */}

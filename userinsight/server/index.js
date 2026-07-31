@@ -70,10 +70,12 @@ function extractJson(text, open, close) {
 }
 
 /** 调用 OpenAI 兼容的 chat/completions 接口 */
-async function chat(cfg, messages, temperature = 0.7) {
+async function chat(cfg, messages, temperature) {
   const url = cfg.baseURL.replace(/\/+$/, '') + '/chat/completions';
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 90000);
+  const timer = setTimeout(() => controller.abort(), 180000);
+  const body = { model: cfg.model, messages };
+  if (temperature !== undefined) body.temperature = temperature;
   try {
     const resp = await fetch(url, {
       method: 'POST',
@@ -82,7 +84,7 @@ async function chat(cfg, messages, temperature = 0.7) {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${cfg.apiKey}`,
       },
-      body: JSON.stringify({ model: cfg.model, messages, temperature }),
+      body: JSON.stringify(body),
     });
     if (!resp.ok) {
       const t = await resp.text();
@@ -345,7 +347,7 @@ app.post('/api/insight-draft', async (req, res) => {
     (category ? `洞察分类方向：${category}。\n` : '') +
     '原始引语：\n' + quotes.slice(0, 10).map((q, i) => `${i + 1}. ${String(q).slice(0, 300)}`).join('\n');
   try {
-    const text = await chat(cfg, [{ role: 'user', content: prompt }], 0.5);
+    const text = await chat(cfg, [{ role: 'user', content: prompt }]);
     const obj = extractJson(text, '{', '}');
     if (!obj || typeof obj !== 'object') {
       return res.status(502).json({ error: '模型返回格式异常，无法解析洞察草稿' });
@@ -372,7 +374,7 @@ app.post('/api/persona-draft', async (req, res) => {
     '"behaviors":["行为特征1","行为特征2","行为特征3"],"quote":"一句能代表该用户的口语化引语"}\n' +
     '评价数据摘要：\n' + String(summary).slice(0, 3000);
   try {
-    const text = await chat(cfg, [{ role: 'user', content: prompt }], 0.6);
+    const text = await chat(cfg, [{ role: 'user', content: prompt }]);
     const obj = extractJson(text, '{', '}');
     if (!obj || typeof obj !== 'object') {
       return res.status(502).json({ error: '模型返回格式异常，无法解析画像草稿' });

@@ -235,7 +235,7 @@ export const direct = {
       (category ? `洞察分类方向：${category}。\n` : '') +
       '原始引语：\n' +
       quotes.slice(0, 10).map((q, i) => `${i + 1}. ${String(q).slice(0, 300)}`).join('\n');
-    const text = await chat(cfg, [{ role: 'user', content: prompt }], 0.5);
+    const text = await chat(cfg, [{ role: 'user', content: prompt }]);
     const obj = extractJson(text, '{', '}') as Record<string, unknown> | null;
     if (!obj || typeof obj !== 'object') {
       const err: ChatError = new Error('模型返回格式异常，无法解析洞察草稿');
@@ -271,7 +271,7 @@ export const direct = {
       '"behaviors":["行为特征1","行为特征2","行为特征3"],"quote":"一句能代表该用户的口语化引语"}\n' +
       '评价数据摘要：\n' +
       String(summary).slice(0, 3000);
-    const text = await chat(cfg, [{ role: 'user', content: prompt }], 0.6);
+    const text = await chat(cfg, [{ role: 'user', content: prompt }]);
     const obj = extractJson(text, '{', '}') as Record<string, unknown> | null;
     if (!obj || typeof obj !== 'object') {
       const err: ChatError = new Error('模型返回格式异常，无法解析画像草稿');
