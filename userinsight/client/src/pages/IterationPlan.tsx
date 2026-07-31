@@ -29,20 +29,22 @@ export default function IterationPlanPage() {
 }
 
 function IterationPlanWorkspace() {
-  const { current, updateCurrent } = useStore();
+  const { current, updateCurrent, iterationGen, startIterationGeneration, clearIterationGen } = useStore();
   const plans = current!.iterationPlans || [];
   const [activePlanId, setActivePlanId] = useState<string | null>(plans.find((p) => p.isActive)?.id || plans[0]?.id || null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [logs, setLogs] = useState<string[]>([]);
   const logEndRef = useRef<HTMLDivElement>(null);
-
-  const addLog = (msg: string) =>
-    setLogs((prev) => [...prev, `[${new Date().toLocaleTimeString('zh-CN')}] ${msg}`]);
 
   useEffect(() => {
     if (logEndRef.current) logEndRef.current.scrollIntoView({ behavior: 'smooth' });
-  }, [logs]);
+  }, [iterationGen.logs]);
+
+  // 当前激活的方案变化时（如生成完成新增方案），自动切换标签
+  useEffect(() => {
+    const active = plans.find((p) => p.isActive);
+    if (active && active.id !== activePlanId) {
+      setActivePlanId(active.id);
+    }
+  }, [plans, activePlanId]);
 
   // 筛选
   const [priorityFilter, setPriorityFilter] = useState<IterationItem['priority'] | 'all'>('all');
@@ -62,74 +64,8 @@ function IterationPlanWorkspace() {
     }));
   };
 
-  const generatePlan = async () => {
-    if (!current) return;
-    const reviews = current.reviews;
-    const insights = current.insights;
-    if (!reviews.length || !insights.length) return;
-    setLoading(true);
-    setError('');
-    setLogs([]);
-
-    const wait = (ms = 60) => new Promise((resolve) => setTimeout(resolve, ms));
-
-    try {
-      addLog('开始生成迭代方案，正在读取项目数据…');
-      await wait();
-      addLog(`已读取 ${reviews.length} 条评价、${insights.length} 条洞察`);
-
-      const kwMap = new Map<string, number>();
-      reviews.forEach((r) => r.keywords.forEach((k) => kwMap.set(k, (kwMap.get(k) || 0) + 1)));
-      const topKw = [...kwMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k, v]) => `${k}(${v})`).join('、') || '—';
-      addLog(`提取高频关键词：${topKw}`);
-
-      const painMap = new Map<string, number>();
-      reviews.forEach((r) => r.painPointType && painMap.set(r.painPointType, (painMap.get(r.painPointType) || 0) + 1));
-      const topPain = [...painMap.entries()].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}(${v})`).join('、') || '—';
-      addLog(`提取痛点分布：${topPain}`);
-
-      const insightInputs = insights.slice(0, 12).map((ins) => ({
-        quote: ins.quote,
-        behaviorInsight: ins.behaviorInsight,
-        designRequirement: ins.designRequirement,
-        hmwQuestion: ins.hmwQuestion,
-        priority: ins.priority,
-      }));
-      addLog(`已选取 ${insightInputs.length} 条核心洞察用于方案生成`);
-
-      const summaryText = `评价总数：${reviews.length}\n高频关键词：${topKw}\n痛点分布：${topPain}`;
-      addLog('正在请求大模型生成迭代方案，请耐心等待…');
-      await wait();
-
-      const { api } = await import('../lib/api');
-      const draft = await api.iterationPlanDraft(current.product, summaryText, insightInputs);
-
-      addLog(`模型返回成功，解析方案结构中…`);
-      await wait();
-
-      const newPlan: IterationPlanType = {
-        id: uid(),
-        name: `迭代方案 v${plans.length + 1}`,
-        summary: draft.summary || '',
-        coreProblems: draft.coreProblems || [],
-        items: (draft.items || []).map((it) => ({ ...it, id: uid(), done: false })),
-        metrics: draft.metrics || [],
-        createdAt: new Date().toISOString(),
-        isActive: true,
-      };
-      updateCurrent((p) => ({
-        ...p,
-        iterationPlans: [...p.iterationPlans.map((pl) => ({ ...pl, isActive: false })), newPlan],
-      }));
-      setActivePlanId(newPlan.id);
-      addLog(`生成完成，得到 ${newPlan.items.length} 条迭代项，已保存为「${newPlan.name}」`);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : '生成失败';
-      setError(msg);
-      addLog(`生成失败：${msg}`);
-    } finally {
-      setLoading(false);
-    }
+  const generatePlan = () => {
+    startIterationGeneration();
   };
 
   const deletePlan = (id: string) => {
@@ -225,30 +161,30 @@ function IterationPlanWorkspace() {
           )}
           <button
             className={btnPrimary}
-            disabled={loading || !current!.reviews.length || !current!.insights.length}
+            disabled={iterationGen.loading || !current!.reviews.length || !current!.insights.length}
             onClick={generatePlan}
             title={current!.reviews.length && current!.insights.length ? '基于当前评价和洞察生成迭代方案' : '需要先有评价和洞察数据'}
           >
-            {loading ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
-            {loading ? '生成中…' : activePlan ? '重新生成方案' : 'AI 生成迭代方案'}
+            {iterationGen.loading ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
+            {iterationGen.loading ? '生成中…' : activePlan ? '重新生成方案' : 'AI 生成迭代方案'}
           </button>
         </div>
       </div>
 
-      {error && <div className="bg-red-50 text-red-700 text-sm px-4 py-3 rounded-lg">{error}</div>}
+      {iterationGen.error && <div className="bg-red-50 text-red-700 text-sm px-4 py-3 rounded-lg">{iterationGen.error}</div>}
 
-      {(loading || logs.length > 0) && (
+      {(iterationGen.loading || iterationGen.logs.length > 0) && (
         <div className={`${cardCls} p-4`}>
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-sm font-semibold text-gray-900 inline-flex items-center gap-2">
               <Terminal size={15} className="text-primary" /> 生成日志
             </h3>
-            {!loading && logs.length > 0 && (
-              <button className="text-xs text-gray-400 hover:text-gray-600" onClick={() => setLogs([])}>清空</button>
+            {!iterationGen.loading && iterationGen.logs.length > 0 && (
+              <button className="text-xs text-gray-400 hover:text-gray-600" onClick={clearIterationGen}>清空</button>
             )}
           </div>
           <div className="bg-slate-900 rounded-lg p-3 h-40 overflow-y-auto font-mono text-xs space-y-1">
-            {logs.map((l, i) => <p key={i} className="text-slate-300">{l}</p>)}
+            {iterationGen.logs.map((l, i) => <p key={i} className="text-slate-300">{l}</p>)}
             <div ref={logEndRef} />
           </div>
         </div>

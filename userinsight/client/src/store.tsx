@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { Project, Review } from './types';
+import { Project, Review, IterationPlan } from './types';
 import { loadData, saveData } from './lib/storage';
 import { createSeedProject } from './lib/seed';
 import { uid, similarity, sentimentFromRating, PLATFORMS, PLATFORM_KEYS } from './lib/utils';
@@ -24,6 +24,12 @@ export interface CollectionState {
   };
 }
 
+export interface IterationGenState {
+  loading: boolean;
+  logs: string[];
+  error: string | null;
+}
+
 interface StoreShape {
   projects: Project[];
   current: Project | null;
@@ -31,7 +37,10 @@ interface StoreShape {
   saveError: string | null;
   globalSearch: string;
   collection: CollectionState;
+  iterationGen: IterationGenState;
   setGlobalSearch: (s: string) => void;
+  clearIterationGen: () => void;
+  startIterationGeneration: () => void;
   setCurrentId: (id: string) => void;
   addProject: (input: { name: string; product: string; goal: string }) => string;
   deleteProject: (id: string) => void;
@@ -72,10 +81,12 @@ function nowTime() {
   return new Date().toLocaleTimeString();
 }
 
-type AppState = { projects: Project[]; currentId: string | null; collection: CollectionState };
+const emptyIterationGen: IterationGenState = { loading: false, logs: [], error: null };
+
+type AppState = { projects: Project[]; currentId: string | null; collection: CollectionState; iterationGen: IterationGenState };
 
 export function StoreProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<AppState>(() => ({ ...loadInitial(), collection: emptyCollection }));
+  const [state, setState] = useState<AppState>(() => ({ ...loadInitial(), collection: emptyCollection, iterationGen: emptyIterationGen }));
   const [saveError, setSaveError] = useState<string | null>(null);
   const [globalSearch, setGlobalSearch] = useState('');
 
@@ -276,6 +287,91 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       saveError,
       globalSearch,
       collection: state.collection,
+      iterationGen: state.iterationGen,
+      clearIterationGen: () => setState((s) => ({ ...s, iterationGen: emptyIterationGen })),
+      startIterationGeneration: () => {
+        const project = current;
+        if (!project) return;
+        const reviews = project.reviews;
+        const insights = project.insights;
+        if (!reviews.length || !insights.length) return;
+        setState((s) => {
+          if (s.iterationGen.loading) return s;
+          return { ...s, iterationGen: { loading: true, logs: [`[${nowTime()}] 开始生成迭代方案，正在读取项目数据…`], error: null } };
+        });
+
+        const pushLog = (line: string) =>
+          setState((s) => ({ ...s, iterationGen: { ...s.iterationGen, logs: [...s.iterationGen.logs, `[${nowTime()}] ${line}`] } }));
+
+        const wait = (ms = 60) => new Promise((resolve) => setTimeout(resolve, ms));
+
+        (async () => {
+          try {
+            await wait();
+            pushLog(`已读取 ${reviews.length} 条评价、${insights.length} 条洞察`);
+
+            const kwMap = new Map<string, number>();
+            reviews.forEach((r) => r.keywords.forEach((k) => kwMap.set(k, (kwMap.get(k) || 0) + 1)));
+            const topKw = [...kwMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k, v]) => `${k}(${v})`).join('、') || '—';
+            pushLog(`提取高频关键词：${topKw}`);
+
+            const painMap = new Map<string, number>();
+            reviews.forEach((r) => r.painPointType && painMap.set(r.painPointType, (painMap.get(r.painPointType) || 0) + 1));
+            const topPain = [...painMap.entries()].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}(${v})`).join('、') || '—';
+            pushLog(`提取痛点分布：${topPain}`);
+
+            const insightInputs = insights.slice(0, 12).map((ins) => ({
+              quote: ins.quote,
+              behaviorInsight: ins.behaviorInsight,
+              designRequirement: ins.designRequirement,
+              hmwQuestion: ins.hmwQuestion,
+              priority: ins.priority,
+            }));
+            pushLog(`已选取 ${insightInputs.length} 条核心洞察用于方案生成`);
+
+            const summaryText = `评价总数：${reviews.length}\n高频关键词：${topKw}\n痛点分布：${topPain}`;
+            pushLog('正在请求大模型生成迭代方案，请耐心等待…');
+            await wait();
+
+            const draft = await api.iterationPlanDraft(project.product, summaryText, insightInputs);
+
+            pushLog('模型返回成功，解析方案结构中…');
+            await wait();
+
+            const existingPlans = project.iterationPlans || [];
+            const newPlan: IterationPlan = {
+              id: uid(),
+              name: `迭代方案 v${existingPlans.length + 1}`,
+              summary: draft.summary || '',
+              coreProblems: draft.coreProblems || [],
+              items: (draft.items || []).map((it) => ({ ...it, id: uid(), done: false })),
+              metrics: draft.metrics || [],
+              createdAt: new Date().toISOString(),
+              isActive: true,
+            };
+            setState((s) => ({
+              ...s,
+              projects: s.projects.map((p) =>
+                p.id === project.id
+                  ? { ...p, iterationPlans: [...p.iterationPlans.map((pl) => ({ ...pl, isActive: false })), newPlan] }
+                  : p
+              ),
+              iterationGen: {
+                ...s.iterationGen,
+                logs: [...s.iterationGen.logs, `[${nowTime()}] 生成完成，得到 ${newPlan.items.length} 条迭代项，已保存为「${newPlan.name}」`],
+              },
+            }));
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : '生成失败';
+            setState((s) => ({
+              ...s,
+              iterationGen: { ...s.iterationGen, error: msg, logs: [...s.iterationGen.logs, `[${nowTime()}] 生成失败：${msg}`] },
+            }));
+          } finally {
+            setState((s) => ({ ...s, iterationGen: { ...s.iterationGen, loading: false } }));
+          }
+        })();
+      },
       setGlobalSearch,
       setCurrentId: (id) => setState((s) => ({ ...s, currentId: id })),
       addProject: (input) => {
@@ -317,7 +413,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           return { ...s, projects: s.projects.map((p) => (p.id === cur.id ? fn(p) : p)) };
         }),
       importAll: (projects: Project[], currentId: string | null) =>
-        setState({ projects, currentId: currentId || projects[0]?.id || null, collection: emptyCollection }),
+        setState({ projects, currentId: currentId || projects[0]?.id || null, collection: emptyCollection, iterationGen: emptyIterationGen }),
       startCollection,
       startSearchCollection,
       cancelCollection: () => updateCollection({ phase: 'idle', error: '采集已取消' }),
