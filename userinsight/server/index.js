@@ -73,7 +73,7 @@ function extractJson(text, open, close) {
 async function chat(cfg, messages, temperature) {
   const url = cfg.baseURL.replace(/\/+$/, '') + '/chat/completions';
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 180000);
+  const timer = setTimeout(() => controller.abort(), 600000);
   const body = { model: cfg.model, messages };
   if (temperature !== undefined) body.temperature = temperature;
   try {

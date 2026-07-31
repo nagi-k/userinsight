@@ -65,6 +65,7 @@ export default function Agent() {
       // 1. 采集
       setStep('collect', 'running');
       addLog(`开始采集「${current.product}」，平台：${platforms.map((k) => PLATFORMS[k as keyof typeof PLATFORMS]).join('、')}，目标 ${count} 条`);
+      addLog('正在请求大模型生成评价，请耐心等待（模型响应可能需数分钟）…');
       const collectRes = await api.collect({
         keyword: current.product,
         platforms,
@@ -72,6 +73,7 @@ export default function Agent() {
         focus: focus || '工业设计、用户体验、使用痛点',
         exclude: [],
       });
+      addLog(`大模型已返回 ${collectRes.reviews?.length || 0} 条原始评价，正在进行结构化校验…`);
       const newReviews: Review[] = (collectRes.reviews || []).map((r) => ({
         id: uid(),
         content: r.content,
@@ -92,6 +94,7 @@ export default function Agent() {
         createdAt: new Date().toISOString(),
         tags: [],
       }));
+      addLog(`校验完成，有效评价 ${newReviews.length} 条，正在保存到项目…`);
       updateCurrent((p) => ({ ...p, reviews: [...p.reviews, ...newReviews] }));
       addLog(`采集完成，新增 ${newReviews.length} 条评价`);
       setStep('collect', 'success');
@@ -105,10 +108,11 @@ export default function Agent() {
       // 2. 洞察提取（对前 8 条评价分批生成）
       setStep('insight', 'running');
       const insightsToGenerate = newReviews.slice(0, 8);
+      addLog(`洞察提取阶段开始，计划从 ${insightsToGenerate.length} 条评价中生成洞察…`);
       const generatedInsights: Insight[] = [];
       for (let i = 0; i < insightsToGenerate.length; i++) {
         const r = insightsToGenerate[i];
-        addLog(`正在提取第 ${i + 1}/${insightsToGenerate.length} 条洞察…`);
+        addLog(`正在提取第 ${i + 1}/${insightsToGenerate.length} 条洞察（请求大模型中）…`);
         try {
           const draft = await api.insightDraft([r.content], 'ergonomics');
           const ins: Insight = {
@@ -124,6 +128,7 @@ export default function Agent() {
             createdAt: new Date().toISOString(),
           };
           generatedInsights.push(ins);
+          addLog(`第 ${i + 1}/${insightsToGenerate.length} 条洞察提取完成`);
         } catch {
           addLog(`第 ${i + 1} 条洞察提取失败，已跳过`);
         }
@@ -133,11 +138,12 @@ export default function Agent() {
         generatedInsights.forEach((ins, idx) => (ins.order = startOrder + idx + 1));
         updateCurrent((p) => ({ ...p, insights: [...p.insights, ...generatedInsights] }));
       }
-      addLog(`洞察提取完成，新增 ${generatedInsights.length} 条洞察`);
+      addLog(`洞察提取完成，新增 ${generatedInsights.length}/${insightsToGenerate.length} 条洞察`);
       setStep('insight', 'success');
 
       // 3. 画像生成
       setStep('persona', 'running');
+      addLog('画像生成阶段开始，正在汇总评价数据…');
       const allReviews = [...current.reviews, ...newReviews];
       const kwMap = new Map<string, number>();
       allReviews.forEach((r) => r.keywords.forEach((k) => kwMap.set(k, (kwMap.get(k) || 0) + 1)));
@@ -147,6 +153,7 @@ export default function Agent() {
       const topPain = [...painMap.entries()].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}(${v})`).join('、');
       const samples = allReviews.slice(0, 8).map((r) => `- ${r.content}`).join('\n');
       const summaryText = `评价总数：${allReviews.length}\n高频关键词：${topKw}\n痛点分布：${topPain}\n代表性评价：\n${samples}`;
+      addLog(`画像数据汇总完成：共 ${allReviews.length} 条评价，正在请求大模型生成画像…`);
 
       let persona: Persona | null = null;
       try {
@@ -169,7 +176,9 @@ export default function Agent() {
 
       // 4. 报告导出
       setStep('report', 'running');
+      addLog('报告导出阶段开始，正在汇总采集、洞察、画像数据…');
       const markdown = buildMarkdown(current.product, current.name, current.goal, current.createdAt, allReviews, [...current.insights, ...generatedInsights], persona ? [persona] : []);
+      addLog('Markdown 报告内容已生成，正在触发下载…');
       download(`${current.name}-Agent研究报告-${new Date().toISOString().slice(0, 10)}.md`, markdown, 'text/markdown;charset=utf-8');
       addLog('Markdown 报告已生成并触发下载');
       setStep('report', 'success');

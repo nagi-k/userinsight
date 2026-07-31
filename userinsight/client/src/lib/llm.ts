@@ -77,7 +77,7 @@ export interface ChatError extends Error {
 async function chat(cfg: LLMSettings, messages: { role: string; content: string }[], temperature?: number): Promise<string> {
   const url = cfg.baseURL.replace(/\/+$/, '') + '/chat/completions';
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 180000);
+  const timer = setTimeout(() => controller.abort(), 600000);
   const body: Record<string, unknown> = { model: cfg.model, messages };
   if (temperature !== undefined) body.temperature = temperature;
   let resp: Response;
@@ -95,7 +95,7 @@ async function chat(cfg: LLMSettings, messages: { role: string; content: string 
     clearTimeout(timer);
     const err: ChatError = new Error(
       e instanceof Error && e.name === 'AbortError'
-        ? '请求超时（180 秒无响应）'
+        ? '请求超时（600 秒无响应）'
         : '网络请求失败：无法连接模型接口，或该服务不允许浏览器跨域调用（CORS）'
     );
     err.endpoint = url;
