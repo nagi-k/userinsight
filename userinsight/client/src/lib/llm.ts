@@ -289,4 +289,83 @@ export const direct = {
       quote: String(obj.quote || ''),
     };
   },
+
+  async iterationPlanDraft(
+    cfg: LLMSettings,
+    product: string,
+    summary: string,
+    insights: { quote: string; behaviorInsight: string; designRequirement: string; hmwQuestion: string; priority: string }[]
+  ): Promise<{
+    summary: string;
+    coreProblems: string[];
+    items: {
+      title: string;
+      description: string;
+      priority: 'high' | 'medium' | 'low';
+      effort: 'small' | 'medium' | 'large';
+      impact: string;
+      relatedInsight?: string;
+      phase: 'short' | 'medium' | 'long';
+    }[];
+    metrics: string[];
+  }> {
+    const validPriority = (v: unknown): 'high' | 'medium' | 'low' =>
+      (v === 'high' || v === 'medium' || v === 'low' ? v : 'medium') as 'high' | 'medium' | 'low';
+    const validEffort = (v: unknown): 'small' | 'medium' | 'large' =>
+      (v === 'small' || v === 'medium' || v === 'large' ? v : 'medium') as 'small' | 'medium' | 'large';
+    const validPhase = (v: unknown): 'short' | 'medium' | 'long' =>
+      (v === 'short' || v === 'medium' || v === 'long' ? v : 'short') as 'short' | 'medium' | 'long';
+
+    const insightsText = insights
+      .slice(0, 12)
+      .map(
+        (ins, i) =>
+          `${i + 1}. [${ins.priority}优先级] ${ins.behaviorInsight}\n   设计需求：${ins.designRequirement}\n   HMW：${ins.hmwQuestion}`
+      )
+      .join('\n');
+
+    const prompt =
+      '你是一名资深产品策略顾问，基于用户研究成果为企业制定可落地的产品迭代方案。' +
+      '请基于以下产品信息、用户洞察摘要和核心洞察，输出一份结构化迭代方案。' +
+      '严格返回可被 JSON.parse 解析的 JSON 对象，不要输出任何其他文字：\n' +
+      '{"summary":"方案总体概述（120字内）","coreProblems":["核心问题1","核心问题2","核心问题3"],' +
+      '"items":[' +
+      '{"title":"迭代项标题","description":"具体改进描述（80字内）","priority":"high/medium/low",' +
+      '"effort":"small/medium/large","impact":"预期业务/用户价值（60字内）","relatedInsight":"关联的HMW或设计需求","phase":"short/medium/long"}' +
+      '],"metrics":["衡量指标1","衡量指标2","衡量指标3"]}\n' +
+      '要求：1) 迭代项不少于4条、不超过8条；2) 按优先级和阶段合理排序；3) 改进描述必须具体可执行；4) 每条迭代项必须关联一个洞察依据。\n\n' +
+      `产品：${String(product).slice(0, 50)}\n` +
+      `研究摘要：\n${String(summary).slice(0, 1500)}\n\n` +
+      `核心洞察：\n${insightsText}`;
+
+    const text = await chat(cfg, [{ role: 'user', content: prompt }]);
+    const obj = extractJson(text, '{', '}') as Record<string, unknown> | null;
+    if (!obj || typeof obj !== 'object') {
+      const err: ChatError = new Error('模型返回格式异常，无法解析迭代方案');
+      err.body = text.slice(0, 500);
+      throw err;
+    }
+    const asArray = (v: unknown): string[] =>
+      Array.isArray(v) ? v.map(String).filter(Boolean).slice(0, 8) : [];
+    const rawItems = Array.isArray(obj.items) ? obj.items : [];
+    return {
+      summary: String(obj.summary || ''),
+      coreProblems: asArray(obj.coreProblems),
+      items: rawItems
+        .map((it: unknown) => {
+          const item = it as Record<string, unknown>;
+          return {
+            title: String(item.title || ''),
+            description: String(item.description || ''),
+            priority: validPriority(item.priority),
+            effort: validEffort(item.effort),
+            impact: String(item.impact || ''),
+            relatedInsight: item.relatedInsight ? String(item.relatedInsight) : undefined,
+            phase: validPhase(item.phase),
+          };
+        })
+        .filter((it) => it.title || it.description),
+      metrics: asArray(obj.metrics),
+    };
+  },
 };

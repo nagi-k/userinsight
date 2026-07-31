@@ -304,18 +304,18 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
             currentId: s.currentId === id ? projects[0]?.id ?? null : s.currentId,
           };
         }),
-      updateProject: (id, fn) =>
+      updateProject: (id: string, fn: (p: Project) => Project) =>
         setState((s) => ({
           ...s,
           projects: s.projects.map((p) => (p.id === id ? fn(p) : p)),
         })),
-      updateCurrent: (fn) =>
+      updateCurrent: (fn: (p: Project) => Project) =>
         setState((s) => {
           const cur = s.projects.find((p) => p.id === s.currentId) || s.projects[0];
           if (!cur) return s;
           return { ...s, projects: s.projects.map((p) => (p.id === cur.id ? fn(p) : p)) };
         }),
-      importAll: (projects, currentId) =>
+      importAll: (projects: Project[], currentId: string | null) =>
         setState({ projects, currentId: currentId || projects[0]?.id || null, collection: emptyCollection }),
       startCollection,
       startSearchCollection,
@@ -325,8 +325,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         const col = state.collection;
         if (!col.projectId || col.phase !== 'confirm') return;
         const toAdd = col.pending
-          .filter((p) => p.checked)
-          .map(({ checked, dup, ...rest }) => rest as Review);
+          .filter((p: PendingReview) => p.checked)
+          .map(({ checked, dup, ...rest }: PendingReview) => rest as Review);
         if (!toAdd.length) return;
         setState((s) => ({
           ...s,
@@ -336,7 +336,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           collection: emptyCollection,
         }));
       },
-      setPendingChecked: (id, checked) =>
+      setPendingChecked: (id: string, checked: boolean) =>
         setState((s) => ({
           ...s,
           collection: {
@@ -344,12 +344,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
             pending: s.collection.pending.map((p) => (p.id === id ? { ...p, checked } : p)),
           },
         })),
-      setPendingAllChecked: (checked) =>
+      setPendingAllChecked: (checked: boolean) =>
         setState((s) => ({
           ...s,
           collection: { ...s.collection, pending: s.collection.pending.map((p) => ({ ...p, checked })) },
         })),
-      removePending: (id) =>
+      removePending: (id: string) =>
         setState((s) => ({
           ...s,
           collection: {
@@ -357,7 +357,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
             pending: s.collection.pending.filter((p) => p.id !== id),
           },
         })),
-      updatePendingReview: (id, fn) =>
+      updatePendingReview: (id: string, fn: (r: PendingReview) => PendingReview) =>
         setState((s) => ({
           ...s,
           collection: {

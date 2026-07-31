@@ -393,6 +393,65 @@ app.post('/api/persona-draft', async (req, res) => {
   }
 });
 
+app.post('/api/iteration-plan-draft', async (req, res) => {
+  const cfg = requireConfig(req, res);
+  if (!cfg) return;
+  const { product = '', summary = '', insights = [] } = req.body || {};
+  const validPriority = (v) => (v === 'high' || v === 'medium' || v === 'low' ? v : 'medium');
+  const validEffort = (v) => (v === 'small' || v === 'medium' || v === 'large' ? v : 'medium');
+  const validPhase = (v) => (v === 'short' || v === 'medium' || v === 'long' ? v : 'short');
+
+  const insightsText = (Array.isArray(insights) ? insights : [])
+    .slice(0, 12)
+    .map(
+      (ins, i) =>
+        `${i + 1}. [${validPriority(ins.priority)}优先级] ${ins.behaviorInsight || ''}\n   设计需求：${ins.designRequirement || ''}\n   HMW：${ins.hmwQuestion || ''}`
+    )
+    .join('\n');
+
+  const prompt =
+    '你是一名资深产品策略顾问，基于用户研究成果为企业制定可落地的产品迭代方案。' +
+    '请基于以下产品信息、用户洞察摘要和核心洞察，输出一份结构化迭代方案。' +
+    '严格返回可被 JSON.parse 解析的 JSON 对象，不要输出任何其他文字：\n' +
+    '{"summary":"方案总体概述（120字内）","coreProblems":["核心问题1","核心问题2","核心问题3"],' +
+    '"items":[' +
+    '{"title":"迭代项标题","description":"具体改进描述（80字内）","priority":"high/medium/low",' +
+    '"effort":"small/medium/large","impact":"预期业务/用户价值（60字内）","relatedInsight":"关联的HMW或设计需求","phase":"short/medium/long"}' +
+    '],"metrics":["衡量指标1","衡量指标2","衡量指标3"]}\n' +
+    '要求：1) 迭代项不少于4条、不超过8条；2) 按优先级和阶段合理排序；3) 改进描述必须具体可执行；4) 每条迭代项必须关联一个洞察依据。\n\n' +
+    `产品：${String(product).slice(0, 50)}\n` +
+    `研究摘要：\n${String(summary).slice(0, 1500)}\n\n` +
+    `核心洞察：\n${insightsText}`;
+
+  try {
+    const text = await chat(cfg, [{ role: 'user', content: prompt }]);
+    const obj = extractJson(text, '{', '}');
+    if (!obj || typeof obj !== 'object') {
+      return res.status(502).json({ error: '模型返回格式异常，无法解析迭代方案' });
+    }
+    const asArray = (v) => (Array.isArray(v) ? v.map(String).filter(Boolean).slice(0, 8) : []);
+    const rawItems = Array.isArray(obj.items) ? obj.items : [];
+    res.json({
+      summary: String(obj.summary || ''),
+      coreProblems: asArray(obj.coreProblems),
+      items: rawItems
+        .map((it) => ({
+          title: String(it.title || ''),
+          description: String(it.description || ''),
+          priority: validPriority(it.priority),
+          effort: validEffort(it.effort),
+          impact: String(it.impact || ''),
+          relatedInsight: it.relatedInsight ? String(it.relatedInsight) : undefined,
+          phase: validPhase(it.phase),
+        }))
+        .filter((it) => it.title || it.description),
+      metrics: asArray(obj.metrics),
+    });
+  } catch (e) {
+    res.status(502).json({ error: e.name === 'AbortError' ? '请求超时，请重试' : '生成失败：' + e.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`UserInsight server listening on http://localhost:${PORT}`);
 });

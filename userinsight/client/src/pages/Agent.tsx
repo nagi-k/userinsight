@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Bot, Play, Loader2, CheckCircle2, Circle, AlertCircle, Download,
-  CloudDownload, Lightbulb, Users, FileText, Settings as SettingsIcon,
+  CloudDownload, Lightbulb, Users, FileText, Rocket, Settings as SettingsIcon,
 } from 'lucide-react';
 import { useStore } from '../store';
 import { api, hasSettings } from '../lib/api';
@@ -26,6 +26,7 @@ const STEPS: Step[] = [
   { key: 'insight', label: '洞察提取', desc: '从评价中提炼行为洞察与设计机会', icon: <Lightbulb size={16} /> },
   { key: 'persona', label: '画像生成', desc: '聚合典型用户画像', icon: <Users size={16} /> },
   { key: 'report', label: '报告导出', desc: '自动生成 Markdown 研究报告', icon: <FileText size={16} /> },
+  { key: 'iteration', label: '产品迭代方案', desc: '基于研究成果生成可落地的产品迭代建议', icon: <Rocket size={16} /> },
 ];
 
 export default function Agent() {
@@ -36,7 +37,7 @@ export default function Agent() {
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState<Record<string, StepStatus>>(() => Object.fromEntries(STEPS.map((s) => [s.key, 'pending'])));
   const [logs, setLogs] = useState<string[]>([]);
-  const [summary, setSummary] = useState<{ reviews: number; insights: number; personas: number } | null>(null);
+  const [summary, setSummary] = useState<{ reviews: number; insights: number; personas: number; iterationItems: number } | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
 
   const configured = hasSettings();
@@ -183,7 +184,48 @@ export default function Agent() {
       addLog('Markdown 报告已生成并触发下载');
       setStep('report', 'success');
 
-      setSummary({ reviews: newReviews.length, insights: generatedInsights.length, personas: persona ? 1 : 0 });
+      // 5. 产品迭代方案
+      setStep('iteration', 'running');
+      addLog('产品迭代方案阶段开始，正在汇总研究数据…');
+      const allInsights = [...current.insights, ...generatedInsights];
+      const sortedInsights = allInsights.sort(
+        (a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority] || a.order - b.order
+      );
+      const insightInputs = sortedInsights.slice(0, 12).map((ins) => ({
+        quote: ins.quote,
+        behaviorInsight: ins.behaviorInsight,
+        designRequirement: ins.designRequirement,
+        hmwQuestion: ins.hmwQuestion,
+        priority: ins.priority,
+      }));
+      addLog(`共汇总 ${allReviews.length} 条评价、${allInsights.length} 条洞察，正在请求大模型生成迭代方案…`);
+      let iterationItems = 0;
+      try {
+        const plan = await api.iterationPlanDraft(current.product, summaryText, insightInputs);
+        if (plan.items?.length) {
+          updateCurrent((p) => ({
+            ...p,
+            iterationPlan: {
+              summary: plan.summary || '',
+              coreProblems: plan.coreProblems || [],
+              items: plan.items,
+              metrics: plan.metrics || [],
+              createdAt: new Date().toISOString(),
+            },
+          }));
+          iterationItems = plan.items.length;
+          addLog(`迭代方案生成完成，共 ${iterationItems} 条建议`);
+        } else {
+          addLog('迭代方案未返回有效建议，已跳过');
+        }
+        setStep('iteration', 'success');
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : '未知错误';
+        addLog(`迭代方案生成失败：${msg}`);
+        setStep('iteration', 'error');
+      }
+
+      setSummary({ reviews: newReviews.length, insights: generatedInsights.length, personas: persona ? 1 : 0, iterationItems });
     } catch (e) {
       const msg = e instanceof Error ? e.message : '未知错误';
       addLog(`工作流异常：${msg}`);
@@ -333,7 +375,7 @@ export default function Agent() {
             <CheckCircle2 size={20} />
             <h2 className="font-semibold text-lg">工作流执行完成</h2>
           </div>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-4 gap-4">
             <div className="bg-white/15 rounded-xl p-4 text-center">
               <p className="text-3xl font-bold">{summary.reviews}</p>
               <p className="text-sm text-white/80">新增评价</p>
@@ -346,8 +388,12 @@ export default function Agent() {
               <p className="text-3xl font-bold">{summary.personas}</p>
               <p className="text-sm text-white/80">新增画像</p>
             </div>
+            <div className="bg-white/15 rounded-xl p-4 text-center">
+              <p className="text-3xl font-bold">{summary.iterationItems}</p>
+              <p className="text-sm text-white/80">迭代建议</p>
+            </div>
           </div>
-          <p className="text-sm text-white/80 mt-4">报告已自动下载，你也可以在「设计输出」页面再次导出。</p>
+          <p className="text-sm text-white/80 mt-4">报告与迭代方案已生成，你可以在「设计输出」页面查看完整内容。</p>
         </div>
       )}
     </div>

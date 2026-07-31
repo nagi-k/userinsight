@@ -165,4 +165,27 @@ export const api = {
       () => backendPost('/api/persona-draft', { product, summary }),
       (cfg) => direct.personaDraft(cfg, product, summary)
     ),
+  iterationPlanDraft: (
+    product: string,
+    summary: string,
+    insights: { quote: string; behaviorInsight: string; designRequirement: string; hmwQuestion: string; priority: string }[]
+  ) =>
+    call<{
+      summary: string;
+      coreProblems: string[];
+      items: {
+        title: string;
+        description: string;
+        priority: 'high' | 'medium' | 'low';
+        effort: 'small' | 'medium' | 'large';
+        impact: string;
+        relatedInsight?: string;
+        phase: 'short' | 'medium' | 'long';
+      }[];
+      metrics: string[];
+    }>(
+      'AI 迭代方案',
+      () => backendPost('/api/iteration-plan-draft', { product, summary, insights }),
+      (cfg) => direct.iterationPlanDraft(cfg, product, summary, insights)
+    ),
 };

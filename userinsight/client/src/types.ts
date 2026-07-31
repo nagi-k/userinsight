@@ -1,3 +1,21 @@
+export interface IterationItem {
+  title: string;
+  description: string;
+  priority: 'high' | 'medium' | 'low';
+  effort: 'small' | 'medium' | 'large';
+  impact: string;
+  relatedInsight?: string;
+  phase: 'short' | 'medium' | 'long';
+}
+
+export interface IterationPlan {
+  summary: string;
+  coreProblems: string[];
+  items: IterationItem[];
+  metrics: string[];
+  createdAt: string;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -9,6 +27,7 @@ export interface Project {
   personas: Persona[];
   journeyStages: JourneyStage[];
   competitors: Competitor[];
+  iterationPlan?: IterationPlan;
 }
 
 export interface Review {
