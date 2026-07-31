@@ -2,12 +2,13 @@
  * UserInsight 后端服务
  * 职责：
  *  - 转发大模型 API 请求（规避浏览器跨域限制），兼容 OpenAI 格式接口（Kimi / DeepSeek / 通义等）
- *  - /api/collect        智能采集：组装提示词调用具备联网能力的大模型，校验清洗返回结构化评价
+ *  - /api/collect        智能采集：调用大模型基于自身知识生成有代表性的模拟用户评价，用于设计研究早期探索
+ *  - /api/search-collect 真实采集：需配置 Bing Search v7 API Key，先搜索公开网页再提取真实用户评价
  *  - /api/insight-draft  洞察草稿：基于引语生成 行为洞察/设计需求/HMW 草稿
  *  - /api/persona-draft  画像草稿：基于评价摘要生成 Persona 草稿
  *  - /api/test-connection 测试大模型配置可用性
  *
- * 真实性红线：本服务不生成、不缓存任何评价数据；大模型无搜索结果时返回空数组，绝不虚构。
+ * 注意：/api/collect 默认生成模拟评价；需要真实网页数据请使用 /api/search-collect 并配置 Bing API Key。
  */
 const express = require('express');
 const cors = require('cors');
@@ -184,24 +185,24 @@ app.post('/api/collect', async (req, res) => {
     : '各公开平台');
 
   const systemPrompt =
-    '你是一个严谨的用户研究助手，具备联网检索能力，能够检索中文社交网络与电商平台的公开用户评价。' +
-    '你只返回真实检索到的公开内容，严禁编造评价、昵称或链接。没有检索结果时必须返回空数组 []。' +
+    '你是一名资深用户研究助手，擅长基于产品知识与用户研究经验，生成具有代表性的模拟用户评价。' +
+    '当前环境没有联网检索能力，因此你需要根据对产品的理解，生成符合目标平台风格的典型用户反馈。' +
+    '这些评价用于设计研究早期探索，应覆盖正面、负面、中性不同情感，并体现真实用户可能关注的痛点与场景。' +
     '你的输出必须是可以被 JSON.parse 直接解析的 JSON，不要输出 Markdown 代码块或其他任何解释性文字。';
 
   const excludeLines = Array.isArray(exclude) && exclude.length
-    ? '\n以下内容已采集过，禁止重复返回：\n' + exclude.slice(0, 40).map((c, i) => `${i + 1}. ${String(c).slice(0, 50)}`).join('\n')
+    ? '\n以下内容已生成过，避免高度重复：\n' + exclude.slice(0, 40).map((c, i) => `${i + 1}. ${String(c).slice(0, 50)}`).join('\n')
     : '';
 
   const userPrompt =
-    `请联网检索关于「${String(keyword).trim()}」的真实用户评价与讨论，优先来源平台：${platformNames}。` +
+    `请基于你对「${String(keyword).trim()}」的理解，生成 ${batch} 条有代表性的模拟用户评价，模拟来源平台：${platformNames}。` +
     (focus ? `重点关注：${String(focus).slice(0, 200)}。` : '') +
-    `返回最多 ${batch} 条互不重复的评价。` +
     excludeLines +
     '\n每条评价严格使用以下 JSON 结构，组成一个 JSON 数组返回：\n' +
     '[{"content":"评价原文（口语化，20-200字）","platform":"xiaohongshu/weibo/taobao/jd/zhihu/douyin/smzdm/bilibili/other 之一",' +
     '"rating":1到5的整数,"keywords":["关键词1","关键词2"],"painPointType":"握持/清洁/重量/操作/外观/噪音/价格/其他 之一（无则省略该字段）",' +
-    '"scenario":"使用场景","hasImage":true或false,"sourceUrl":"原文完整链接","authorName":"用户昵称","reviewDate":"YYYY-MM-DD","likeCount":点赞数}]\n' +
-    '要求：1) 每条必须附真实可访问的来源链接 sourceUrl；2) 检索不到足够结果时，有几条返回几条，没有则返回 []；3) 只输出 JSON 数组本身。';
+    '"scenario":"使用场景","hasImage":true或false,"sourceUrl":"可省略或填示例链接","authorName":"用户昵称","reviewDate":"YYYY-MM-DD","likeCount":点赞数}]\n' +
+    '要求：1) 评价应多样化，覆盖不同平台语气和用户场景；2) 没有真实来源链接时 sourceUrl 可省略；3) 只输出 JSON 数组本身。';
 
   try {
     const text = await chat(cfg, [

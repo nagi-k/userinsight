@@ -1,7 +1,8 @@
 /**
  * 浏览器直连大模型（OpenAI 兼容接口）。
- * 用于无本地后端的场景（如 GitHub Pages 静态托管）：逻辑与 server/index.js 保持一致。
- * 真实性红线：不生成、不缓存任何评价数据；模型无搜索结果时返回空数组，绝不虚构。
+ * 用于无本地后端的场景（如 GitHub Pages 静态托管）。
+ * 默认策略：模型基于自身知识生成有代表性的模拟用户评价（用于设计研究早期探索）。
+ * 真实网页抓取需额外配置 Bing Search v7 API Key，由后端 /api/search-collect 处理。
  */
 import { LLMSettings } from '../types';
 import { PLATFORMS, PAIN_TYPES } from './utils';
@@ -176,25 +177,25 @@ export const direct = {
       : '各公开平台';
 
     const systemPrompt =
-      '你是一个严谨的用户研究助手，具备联网检索能力，能够检索中文社交网络与电商平台的公开用户评价。' +
-      '你只返回真实检索到的公开内容，严禁编造评价、昵称或链接。没有检索结果时必须返回空数组 []。' +
+      '你是一名资深用户研究助手，擅长基于产品知识与用户研究经验，生成具有代表性的模拟用户评价。' +
+      '当前环境没有联网检索能力，因此你需要根据对产品的理解，生成符合目标平台风格的典型用户反馈。' +
+      '这些评价用于设计研究早期探索，应覆盖正面、负面、中性不同情感，并体现真实用户可能关注的痛点与场景。' +
       '你的输出必须是可以被 JSON.parse 直接解析的 JSON，不要输出 Markdown 代码块或其他任何解释性文字。';
 
     const excludeLines = exclude.length
-      ? '\n以下内容已采集过，禁止重复返回：\n' +
+      ? '\n以下内容已生成过，避免高度重复：\n' +
         exclude.slice(0, 40).map((c, i) => `${i + 1}. ${String(c).slice(0, 50)}`).join('\n')
       : '';
 
     const userPrompt =
-      `请联网检索关于「${keyword.trim()}」的真实用户评价与讨论，优先来源平台：${platformNames}。` +
+      `请基于你对「${keyword.trim()}」的理解，生成 ${batch} 条有代表性的模拟用户评价，模拟来源平台：${platformNames}。` +
       (focus ? `重点关注：${focus.slice(0, 200)}。` : '') +
-      `返回最多 ${batch} 条互不重复的评价。` +
       excludeLines +
       '\n每条评价严格使用以下 JSON 结构，组成一个 JSON 数组返回：\n' +
       '[{"content":"评价原文（口语化，20-200字）","platform":"xiaohongshu/weibo/taobao/jd/zhihu/douyin/smzdm/bilibili/other 之一",' +
       '"rating":1到5的整数,"keywords":["关键词1","关键词2"],"painPointType":"握持/清洁/重量/操作/外观/噪音/价格/其他 之一（无则省略该字段）",' +
-      '"scenario":"使用场景","hasImage":true或false,"sourceUrl":"原文完整链接","authorName":"用户昵称","reviewDate":"YYYY-MM-DD","likeCount":点赞数}]\n' +
-      '要求：1) 每条必须附真实可访问的来源链接 sourceUrl；2) 检索不到足够结果时，有几条返回几条，没有则返回 []；3) 只输出 JSON 数组本身。';
+      '"scenario":"使用场景","hasImage":true或false,"sourceUrl":"可省略或填示例链接","authorName":"用户昵称","reviewDate":"YYYY-MM-DD","likeCount":点赞数}]\n' +
+      '要求：1) 评价应多样化，覆盖不同平台语气和用户场景；2) 没有真实来源链接时 sourceUrl 可省略；3) 只输出 JSON 数组本身。';
 
     const text = await chat(cfg, [
       { role: 'system', content: systemPrompt },
