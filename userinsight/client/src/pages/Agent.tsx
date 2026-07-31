@@ -203,15 +203,20 @@ export default function Agent() {
       try {
         const plan = await api.iterationPlanDraft(current.product, summaryText, insightInputs);
         if (plan.items?.length) {
+          const existingPlans = current.iterationPlans || [];
+          const newPlan = {
+            id: uid(),
+            name: `Agent 迭代方案 v${existingPlans.length + 1}`,
+            summary: plan.summary || '',
+            coreProblems: plan.coreProblems || [],
+            items: plan.items.map((it) => ({ ...it, id: uid(), done: false })),
+            metrics: plan.metrics || [],
+            createdAt: new Date().toISOString(),
+            isActive: true,
+          };
           updateCurrent((p) => ({
             ...p,
-            iterationPlan: {
-              summary: plan.summary || '',
-              coreProblems: plan.coreProblems || [],
-              items: plan.items,
-              metrics: plan.metrics || [],
-              createdAt: new Date().toISOString(),
-            },
+            iterationPlans: [...p.iterationPlans.map((pl) => ({ ...pl, isActive: false })), newPlan],
           }));
           iterationItems = plan.items.length;
           addLog(`迭代方案生成完成，共 ${iterationItems} 条建议`);

@@ -2,9 +2,9 @@ import React, { useMemo, useState } from 'react';
 import {
   ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, Legend, Tooltip,
 } from 'recharts';
-import { Plus, Trash2, Download, Target, GitCompareArrows, FileText, Rocket, Loader2, Sparkles } from 'lucide-react';
+import { Plus, Trash2, Download, Target, GitCompareArrows, FileText } from 'lucide-react';
 import { useStore } from '../store';
-import { Competitor, Insight, IterationPlan, IterationItem } from '../types';
+import { Competitor, Insight } from '../types';
 import {
   uid, PLATFORMS, SENTIMENT_LABELS, INSIGHT_CATEGORIES, PRIORITY_LABELS,
   CHART_COLORS, download, fmtDate,
@@ -23,7 +23,6 @@ export default function Output() {
         <p className="text-sm text-gray-500 mt-0.5">将研究结论转化为设计机会与可交付报告</p>
       </div>
       <OpportunityList />
-      <IterationPlanSection />
       <CompetitorMatrix />
       <ReportSection />
     </div>
@@ -426,176 +425,3 @@ function ReportSection() {
   );
 }
 
-/* ---------------- 产品迭代方案 ---------------- */
-
-const EFFORT_LABELS: Record<IterationItem['effort'], string> = { small: '小', medium: '中', large: '大' };
-const PHASE_LABELS: Record<IterationItem['phase'], string> = { short: '近期', medium: '中期', long: '远期' };
-
-function buildIterationMarkdown(plan: IterationPlan, project: NonNullable<ReturnType<typeof useStore>['current']>): string {
-  const lines: string[] = [];
-  lines.push(`# ${project.name} · 产品迭代方案`, '');
-  lines.push('## 方案概述', '');
-  lines.push(plan.summary || '—', '');
-  lines.push('## 核心问题', '');
-  if (plan.coreProblems.length) {
-    plan.coreProblems.forEach((p, i) => lines.push(`${i + 1}. ${p}`));
-  } else {
-    lines.push('暂无核心问题。');
-  }
-  lines.push('', '## 迭代建议', '');
-  if (plan.items.length) {
-    plan.items.forEach((it, i) => {
-      lines.push(`${i + 1}. **${it.title}**（${PHASE_LABELS[it.phase]} · 优先级：${PRIORITY_LABELS[it.priority]} · 投入：${EFFORT_LABELS[it.effort]}）`);
-      lines.push(`   ${it.description}`);
-      lines.push(`   预期价值：${it.impact}`);
-      if (it.relatedInsight) lines.push(`   关联洞察：${it.relatedInsight}`);
-      lines.push('');
-    });
-  } else {
-    lines.push('暂无迭代建议。');
-  }
-  lines.push('## 衡量指标', '');
-  if (plan.metrics.length) {
-    plan.metrics.forEach((m, i) => lines.push(`${i + 1}. ${m}`));
-  } else {
-    lines.push('暂无衡量指标。');
-  }
-  lines.push('', `生成时间：${new Date(plan.createdAt).toLocaleString('zh-CN')}`);
-  return lines.join('\n');
-}
-
-function IterationPlanSection() {
-  const { current, updateCurrent } = useStore();
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  if (!current) return null;
-
-  const plan = current.iterationPlan;
-  const reviews = current.reviews;
-  const insights = current.insights;
-  const canGenerate = !!reviews.length && !!insights.length;
-
-  const generatePlan = async () => {
-    if (!canGenerate) return;
-    setLoading(true);
-    setError('');
-    try {
-      const { api } = await import('../lib/api');
-      const kwMap = new Map<string, number>();
-      reviews.forEach((r) => r.keywords.forEach((k) => kwMap.set(k, (kwMap.get(k) || 0) + 1)));
-      const topKw = [...kwMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k, v]) => `${k}(${v})`).join('、');
-      const painMap = new Map<string, number>();
-      reviews.forEach((r) => r.painPointType && painMap.set(r.painPointType, (painMap.get(r.painPointType) || 0) + 1));
-      const topPain = [...painMap.entries()].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}(${v})`).join('、');
-      const summaryText = `评价总数：${reviews.length}\n高频关键词：${topKw}\n痛点分布：${topPain}`;
-      const insightInputs = insights.slice(0, 12).map((ins) => ({
-        quote: ins.quote,
-        behaviorInsight: ins.behaviorInsight,
-        designRequirement: ins.designRequirement,
-        hmwQuestion: ins.hmwQuestion,
-        priority: ins.priority,
-      }));
-      const draft = await api.iterationPlanDraft(current.product, summaryText, insightInputs);
-      updateCurrent((p) => ({
-        ...p,
-        iterationPlan: {
-          summary: draft.summary || '',
-          coreProblems: draft.coreProblems || [],
-          items: draft.items || [],
-          metrics: draft.metrics || [],
-          createdAt: new Date().toISOString(),
-        },
-      }));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '生成失败');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className={`${cardCls} p-5`}>
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="font-semibold text-gray-900 inline-flex items-center gap-2">
-          <Rocket size={17} className="text-primary" /> 产品迭代方案
-        </h2>
-        <div className="flex items-center gap-2">
-          {plan && (
-            <button
-              className={btnSecondary}
-              onClick={() => download(`${current.name}-产品迭代方案.md`, buildIterationMarkdown(plan, current), 'text/markdown;charset=utf-8')}
-            >
-              <Download size={15} /> 导出方案
-            </button>
-          )}
-          <button
-            className={btnPrimary}
-            disabled={!canGenerate || loading}
-            onClick={generatePlan}
-            title={canGenerate ? '基于当前评价和洞察生成迭代方案' : '需要先有评价和洞察数据'}
-          >
-            {loading ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
-            {loading ? '生成中…' : plan ? '重新生成方案' : 'AI 生成迭代方案'}
-          </button>
-        </div>
-      </div>
-
-      {error && <p className="text-sm text-red-600 mb-4">{error}</p>}
-
-      {!plan ? (
-        <div className="text-center py-10 text-gray-400">
-          <Rocket size={40} className="mx-auto mb-3 text-gray-300" />
-          <p>暂无迭代方案</p>
-          <p className="text-xs mt-1">点击右上角按钮，基于当前评价和洞察自动生成</p>
-        </div>
-      ) : (
-        <div className="space-y-5">
-          <section>
-            <h3 className="font-bold text-gray-900 border-l-4 border-primary pl-2 mb-2">方案概述</h3>
-            <p className="text-sm text-gray-600">{plan.summary || '—'}</p>
-          </section>
-          <section>
-            <h3 className="font-bold text-gray-900 border-l-4 border-primary pl-2 mb-2">核心问题</h3>
-            {plan.coreProblems.length ? (
-              <ol className="list-decimal list-inside space-y-1 text-sm text-gray-600">
-                {plan.coreProblems.map((p, i) => <li key={i}>{p}</li>)}
-              </ol>
-            ) : <p className="text-sm text-gray-400">暂无核心问题</p>}
-          </section>
-          <section>
-            <h3 className="font-bold text-gray-900 border-l-4 border-primary pl-2 mb-2">
-              迭代建议（{plan.items.length} 条）
-            </h3>
-            {plan.items.length ? (
-              <div className="space-y-3">
-                {plan.items.map((it, idx) => (
-                  <div key={idx} className="rounded-lg border border-gray-100 p-4 hover:border-primary/30 transition-colors">
-                    <div className="flex flex-wrap items-center gap-2 mb-2">
-                      <span className="font-semibold text-gray-900">{it.title}</span>
-                      <Badge color={it.priority === 'high' ? 'red' : it.priority === 'medium' ? 'amber' : 'gray'}>
-                        {PRIORITY_LABELS[it.priority]}优先级
-                      </Badge>
-                      <Badge color="blue">{PHASE_LABELS[it.phase]}</Badge>
-                      <Badge color="gray">投入 {EFFORT_LABELS[it.effort]}</Badge>
-                    </div>
-                    <p className="text-sm text-gray-600 mb-1.5">{it.description}</p>
-                    <p className="text-xs text-gray-500">预期价值：{it.impact}</p>
-                    {it.relatedInsight && <p className="text-xs text-primary mt-1.5">关联洞察：{it.relatedInsight}</p>}
-                  </div>
-                ))}
-              </div>
-            ) : <p className="text-sm text-gray-400">暂无迭代建议</p>}
-          </section>
-          <section>
-            <h3 className="font-bold text-gray-900 border-l-4 border-primary pl-2 mb-2">衡量指标</h3>
-            {plan.metrics.length ? (
-              <ol className="list-decimal list-inside space-y-1 text-sm text-gray-600">
-                {plan.metrics.map((m, i) => <li key={i}>{m}</li>)}
-              </ol>
-            ) : <p className="text-sm text-gray-400">暂无衡量指标</p>}
-          </section>
-        </div>
-      )}
-    </div>
-  );
-}

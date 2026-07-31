@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   LayoutDashboard, CloudDownload, Database, BarChart3, Lightbulb, FileOutput,
-  Settings as SettingsIcon, Search, Download, Upload, AlertTriangle, FlaskConical, Bot,
+  Settings as SettingsIcon, Search, Download, Upload, AlertTriangle, FlaskConical, Bot, Rocket,
 } from 'lucide-react';
 import { useStore } from './store';
 import { Project } from './types';
@@ -13,6 +13,7 @@ import Analytics from './pages/Analytics';
 import Insights from './pages/Insights';
 import Output from './pages/Output';
 import Agent from './pages/Agent';
+import IterationPlan from './pages/IterationPlan';
 import Settings from './pages/Settings';
 
 const NAV = [
@@ -22,6 +23,7 @@ const NAV = [
   { path: '/analytics', label: '分析看板', icon: BarChart3 },
   { path: '/insights', label: '洞察工坊', icon: Lightbulb },
   { path: '/agent', label: 'Agent', icon: Bot },
+  { path: '/iteration', label: '迭代方案', icon: Rocket },
   { path: '/output', label: '设计输出', icon: FileOutput },
   { path: '/settings', label: '设置', icon: SettingsIcon },
 ];
@@ -87,6 +89,7 @@ export default function App() {
       case '/analytics': return <Analytics />;
       case '/insights': return <Insights />;
       case '/agent': return <Agent />;
+      case '/iteration': return <IterationPlan />;
       case '/output': return <Output />;
       case '/settings': return <Settings />;
       default: return <Dashboard />;

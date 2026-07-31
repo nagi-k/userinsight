@@ -291,6 +291,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           personas: [],
           journeyStages: [],
           competitors: [],
+          iterationPlans: [],
         };
         setState((s) => ({ ...s, projects: [...s.projects, project], currentId: id }));
         return id;

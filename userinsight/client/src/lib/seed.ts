@@ -227,5 +227,6 @@ export function createSeedProject(): Project {
     personas: [seedPersona],
     journeyStages: seedJourney,
     competitors: seedCompetitors,
+    iterationPlans: [],
   };
 }
